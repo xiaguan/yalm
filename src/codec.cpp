@@ -7,41 +7,51 @@
 
 int Tensor::from_json(const std::string& name, const json& j, void* bytes_ptr) {
   tensor.name = name;
+  size_t dsize = 0;
   switch (val.value("dtype", "").get<std::string>()) {
     case "F32": {
       tensor.dtype = DType::dt_f32;
+      dsize = 4;
       break;
     }
     case "F16": {
       tensor.dtype = DType::dt_f16;
+      dsize = 2;
       break;
     }
     case "BF16": {
       tensor.dtype = DType::dt_bf16;
+      dsize = 2;
       break;
     }
     case "F8_E5M2": {
       tensor.dtype = DType::dt_f8e5m2;
+      dsize = 1;
       break;
     }
     case "F8_E4M3": {
       tensor.dtype = DType::dt_f8e4m3;
+      dsize = 1;
       break;
     }
     case "I32": {
       tensor.dtype = DType::dt_i32;
+      dsize = 4;
       break;
     }
     case "I16": {
       tensor.dtype = DType::dt_i16;
+      dsize = 2;
       break;
     }
     case "I8": {
       tensor.dtype = DType::dt_i8;
+      dsize = 1;
       break;
     }
     case "U8": {
       tensor.dtype = DType::dt_u8;
+      dsize = 1;
       break;
     }
     default: {
@@ -50,8 +60,10 @@ int Tensor::from_json(const std::string& name, const json& j, void* bytes_ptr) {
     }
   }
 
+  size_t numel = 1;
   for (size_t i = 0; i < val.at("shape").size() && i < 8; i++) {
     tensor.shape[i] = val.at("shape")[i].get<int>();
+    numel *= tensor.shape[i];
   }
   if (val.at("offsets").size() != 2) {
     return -1;
@@ -64,6 +76,11 @@ int Tensor::from_json(const std::string& name, const json& j, void* bytes_ptr) {
   }
   tensor->data = (char*)bytes_ptr + offset_start;
   tensor->size = offset_end - offset_start;
+  // validate the shape matches the size
+  if (numel * dsize != tensor->size) {
+    std::cout << "bad size" << std::endl;
+    return -1;
+  }
   return 0;
 }
 
