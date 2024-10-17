@@ -3,7 +3,7 @@
 # - Normalizes the config to a common format in the header
 # - Combines any safetensors shards
 # - Reads the token vocabulary into a simpler format
-# - (TODO) Performs quantization to fp8 if specified
+# - (TODO: Performs quantization to fp8 if specified)
 
 import argparse
 import os

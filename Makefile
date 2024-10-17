@@ -14,7 +14,7 @@ SOURCES+=$(wildcard src/*.cu)
 OBJECTS=$(SOURCES:%=$(BUILD)/%.o)
 BINARY=$(BUILD)/main
 
-CFLAGS=-g -Wall -Wpointer-arith -Werror -O3 -ffast-math -Ivendor
+CFLAGS=-g -Wall -Wpointer-arith -Werror -O3 -ffast-math -Ivendor -std=c++17
 LDFLAGS=-lm
 
 CFLAGS+=-fopenmp -mf16c -mavx2 -mfma
