@@ -5,7 +5,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
-int Tensor::from_json(const std::string& name, const json& j, void* bytes_ptr) {
+int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr) {
   tensor.name = name;
   size_t dsize = 0;
   switch (val.value("dtype", "").get<std::string>()) {
