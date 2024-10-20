@@ -2,8 +2,39 @@
 
 #include <string_view>
 
-constexpr int MAX_TOKEN_LENGTH = 512;
-constexpr int MAX_UTF8_BYTES = 4;
+Tokenizer::Tokenizer(const YALMData& data, int bos_id, int eos_id) {
+  this->bos_id = bos_id;
+  this->eos_id = eos_id;
+  // TODO figure out edge cases:
+  // Q: should `vocab` include byte fallback tokens?
+  // Q: should `vocab` include special tokens, e.g. '<unk>', '<s>', '</s>'?
+  for (auto& val : data.metadata.at("tokenizer.tokens")) {
+    vocab.push_back(val.get<std::string>());
+  }
+  for (int i = 0; i < vocab.size(); i++) {
+    if (vocab[i] == "<0x00>") {
+      byte_fallback_start = i;
+    } else if (vocab[i] == "<|eot_id|>" || vocab[i] == "<|end|>" || vocab[i] == "<|im_end|>") {
+      eot_id = i;
+    }
+  }
+  // init byte_pieces
+  for (int i = 0; i < 256; i++) {
+    byte_pieces[i] = (char)i;
+  }
+  // init vocab trie
+  for (int i = 0; i < vocab.size(); i++) {
+    const std::string& word = vocab[i];
+    TokenTrie& p = vocab_trie;
+    for (char c : word) {
+      if (p.children.count(c) == 0) {
+        p.children[c] = {};
+      }
+      p = p.children[c];
+    }
+    p.token_id = i;
+  }
+}
 
 std::string Tokenizer::decode_one(int prev_token, int token) const {
   const std::string& piece = vocab[token];
@@ -22,57 +53,35 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
   std::vector<int> out_tokens;
   // TODO: handle BOS token (pass optional flag)
 
-  // 1. process the raw UTF-8 bytes of the input string first, building
-  //    a list of token IDs corresponding to byte fallbacks and un-merged tokens.
   for (int i = 0; i < text.size();) {
-    if (i + 3 <= text.size() && text[i] == '<' && text[i + 1] == '|') {
-      // special token, skip until '|>'
-      int l = 3;
-      while (i+l < text.size() && l < MAX_TOKEN_LENGTH && text[i + l - 2] != '|' && text[i + l - 1] != '>') {
-        l++;
-      }
-      std::string_view byte_piece(&text[i], l);
-      if (byte_piece[l - 2] == '|' && byte_piece[l - 1] == '>') {
-        // we found the end of a special token, try to encode it as is
-        auto it = vocab_map.find(byte_piece);
-        if (it != vocab_map.end()) {
-          out_tokens.push_back(it->second);
-          i += l;
-          continue;
+    int l = 0;
+    int valid_l = 0;
+    TokenTrie& p = vocab_trie;
+    TokenTrie* valid_p = nullptr;
+    while (i + l < text.size()) {
+      char c = text[i+l];
+      if (p.children.count(c)) {
+        p = p.children[c];
+        l += 1;
+        if (p.token_id >= 0) {
+          valid_p = &p;
+          valid_l = l;
         }
+      } else {
+        break;
       }
     }
-
-    int l = 1;
-    // this byte is a leading byte (11...), so it's a multi-byte UTF8 codepoint
-    if ((text[i] & 0xC0) == 0xC0) {
-      for (int i = 1; i < MAX_UTF8_BYTES && (text[i] & 0xC0) == 0x80; i++) {
-        // if the next byte is a continuation byte (10...), append it to the current codepoint
-        l++;
+    if (!valid_p) {
+      // No substring starting from `i` matches any vocab words, use byte fallback
+      if (byte_fallback_start >= 0) {
+        out_tokens.push_back((unsigned char)text[i] + byte_fallback_start);
       }
-    }
-    std::string_view byte_piece(&text[i], l);
-    auto it = vocab_map.find(byte_piece);
-    if (it != vocab_map.end()) {
-      out_tokens.push_back(it->second);
-      i += l;
-      continue;
-    } else if (byte_fallback_start >= 0) {
-      // encode using byte fallback
-      for (int j = 0; j < l; j++) {
-        out_tokens.push_back(byte_fallback_start + static_cast<unsigned char>(byte_piece[j]));
-      }
-      i += l;
-      continue;
+      i += 1;
     } else {
-      // TODO: should we be adding <unk> here?
-      i += l;
-      continue;
+      out_tokens.push_back(valid_p->token_id);
+      i += valid_l;
     }
   }
-
-  // 2. merge the tokens.
-  // TODO: implement me
 
   // TODO: handle EOS token (pass optional flag)
 
