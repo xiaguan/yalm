@@ -16,6 +16,8 @@ struct TokenTrie {
 /*
 A tokenizer vocab will look like this in the metadata of a .yalm file:
 ```
+"bos_token_id": "1",
+"eos_token_id": "2",
 "tokenizer.tokens": [
   "<unk>",        // 0
   "<s>",          // 1
@@ -53,8 +55,8 @@ struct Tokenizer {
   // TODO: use constexpr?
   std::string byte_pieces[256];
 
-  Tokenizer(const YALMData& data, int bos_id, int eos_id);
+  Tokenizer(const YALMData& data);
 
-  std::vector<int> encode(const std::string& text) const;
+  std::vector<int> encode(const std::string& text, bool encode_bos) const;
   std::string decode_one(int prev_token, int token) const;
 };

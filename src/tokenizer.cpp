@@ -3,8 +3,8 @@
 #include <string_view>
 
 Tokenizer::Tokenizer(const YALMData& data, int bos_id, int eos_id) {
-  this->bos_id = bos_id;
-  this->eos_id = eos_id;
+  this->bos_id = std::stoi(data.metadata.at("bos_token_id"));
+  this->eos_id = std::stoi(data.metadata.at("eos_token_id"));
   // TODO figure out edge cases:
   // Q: should `vocab` include byte fallback tokens?
   // Q: should `vocab` include special tokens, e.g. '<unk>', '<s>', '</s>'?
@@ -49,9 +49,11 @@ std::string Tokenizer::decode_one(int prev_token, int token) const {
   return piece;
 }
 
-std::vector<int> Tokenizer::encode(const std::string& text) const {
+std::vector<int> Tokenizer::encode(const std::string& text, bool encode_bos) const {
   std::vector<int> out_tokens;
-  // TODO: handle BOS token (pass optional flag)
+  if (encode_bos) {
+    out_tokens.push_back(bos_id);
+  }
 
   for (int i = 0; i < text.size();) {
     int l = 0;
@@ -82,8 +84,6 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
       i += valid_l;
     }
   }
-
-  // TODO: handle EOS token (pass optional flag)
 
   return out_tokens;
 }
