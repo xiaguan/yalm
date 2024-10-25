@@ -1,3 +1,4 @@
+#include <iostream>
 #include <stdio.h>
 
 #include "codec.h"
@@ -57,9 +58,9 @@ int main(int argc, char* argv[]) {
   std::string token_encoding_debug_str = "";
   for (int token_id : encoding) {
     if (token_id == tokenizer.bos_id) {
-      token_encoding_debug_str += "[" + "<s>" + ":" + std::to_string(token_id) + "]";
+      token_encoding_debug_str += "[<s>:" + std::to_string(token_id) + "]";
     } else if (token_id == tokenizer.eos_id) {
-      token_encoding_debug_str += "[" + "</s>" + ":" + std::to_string(token_id) + "]";
+      token_encoding_debug_str += "[</s>:" + std::to_string(token_id) + "]";
     } else {
       token_encoding_debug_str += "[" + tokenizer.vocab[token_id] + ":" + std::to_string(token_id) + "]";
     }

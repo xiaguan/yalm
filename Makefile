@@ -8,7 +8,7 @@ BUILD=build
 
 # compile .c, .cpp, .cu files
 SOURCES=$(wildcard src/*.c)
-SOURCES=$(wildcard src/*.cpp)
+SOURCES+=$(wildcard src/*.cpp)
 SOURCES+=$(wildcard src/*.cu)
 
 OBJECTS=$(SOURCES:%=$(BUILD)/%.o)
@@ -40,15 +40,15 @@ format:
 	clang-format -i src/*
 
 $(BINARY): $(OBJECTS)
-	$(CC) $^ $(LDFLAGS) -o $@
+	$(CXX) $^ $(LDFLAGS) -o $@
 
 $(BUILD)/%.c.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $< $(CFLAGS) -c -MMD -MP -o $@
+	$(CXX) $< $(CFLAGS) -c -MMD -MP -o $@
 
 $(BUILD)/%.cpp.o: %.cpp
 	@mkdir -p $(dir $@)
-	$(CC) $< $(CFLAGS) -c -MMD -MP -o $@
+	$(CXX) $< $(CFLAGS) -c -MMD -MP -o $@
 
 $(BUILD)/%.cu.o: %.cu
 	@mkdir -p $(dir $@)

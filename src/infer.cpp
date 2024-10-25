@@ -1,6 +1,7 @@
 #include "model.h"
 
 #include <assert.h>
+#include <cfloat>
 #include <math.h>
 
 static void matmul(float* xout, float* x, float* w, int n, int d) {
@@ -27,7 +28,7 @@ static void rmsnorm(float* o, float* x, float* weight, int size, float eps) {
   }
 }
 
-static void layernorm(float* o, float* x, float* weight, float* bias, int size, float eps) {
+[[maybe_unused]] static void layernorm(float* o, float* x, float* weight, float* bias, int size, float eps) {
   float mean = 0.0f;
   for (int i = 0; i < size; ++i) {
     mean += x[i];
@@ -107,9 +108,9 @@ static void attn(
   int n_kv_heads, // number of kv heads, can be < n_heads (1 is MultiQueryAttention, >1 is GroupedQueryAttention)
   int kv_len      // number of tokens of the sequence we will attend over
 ) {
-  float kv_stride = n_kv_heads * head_dim; // stride per token in this kv head
+  int kv_stride = n_kv_heads * head_dim; // stride per token in this kv head
   // calculate attention scores as dot products of q and k
-  for (int t = 0; t < kv_len, ++t) {
+  for (int t = 0; t < kv_len; ++t) {
     float score = 0.0f;
     for (int i = 0; i < head_dim; ++i) {
       score += qh[i] * kh[t * kv_stride + i];
@@ -156,9 +157,9 @@ static void block(
   int kv_dim = c.n_kv_heads * c.head_dim;
 
   // qkv matmuls for this position
-  matmul(s.q, s.xb, b.wq, c.dim, q_dim);
-  matmul(s.k, s.xb, b.wk, c.dim, kv_dim);
-  matmul(s.v, s.xb, b.wv, c.dim, kv_dim);
+  matmul(s.q, s.xb, (float*)b.wq, c.dim, q_dim);
+  matmul(s.k, s.xb, (float*)b.wk, c.dim, kv_dim);
+  matmul(s.v, s.xb, (float*)b.wv, c.dim, kv_dim);
 
   // some models require clipping qkv values
   for (int i = 0; i < q_dim; ++i) {
@@ -174,8 +175,8 @@ static void block(
   rope(s.k, kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
   
   // key and value point to the kv cache
-  float* kb = (float*)s.key_cache;
-  float* vb = (float*)s.value_cache;
+  float* kb = (float*)b.key_cache;
+  float* vb = (float*)b.value_cache;
   // update kv cache
   for (int i = 0; i < kv_dim; ++i) {
     kb[kv_pos * kv_dim + i] = s.k[i];
@@ -183,7 +184,7 @@ static void block(
   }
 
   // Multihead attention. Iterate over all heads.
-  int q_per_kv_head = n_heads / n_kv_heads; // query heads per kv head (for MultiQueryAttention/GroupedQueryAttention)
+  int q_per_kv_head = c.n_heads / c.n_kv_heads; // query heads per kv head (for MultiQueryAttention/GroupedQueryAttention)
   int h;
   for (h = 0; h < c.n_heads; ++h) {
     int head_offset = h * c.head_dim;
@@ -195,7 +196,7 @@ static void block(
   }
 
   // final matmul to get output of the attention, using `hb` as temp storage
-  matmul(s.hb, s.xb2, b.wo, q_dim, c.dim);
+  matmul(s.hb, s.xb2, (float*)b.wo, q_dim, c.dim);
 
   // residual connection back into x
   for (int i = 0; i < c.dim; ++i) {
@@ -241,17 +242,16 @@ void forward(InferenceState& s, Model& m, int token, int pos) {
   assert(m.dbits == 32);
   const Config& c = m.config;
 
-  // TODO: attention sinks
-	int kv_pos = pos % c.max_seq_len;
-	int kv_len = pos >= c.max_seq_len ? c.max_seq_len : pos + 1;
-
   // copy the token embedding into `x`
   float* token_embedding_table = (float*)m.token_embedding_table;
   for (int i = 0; i < c.dim; ++i) {
     s.x[i] = token_embedding_table[token * c.dim + i];
   }
 
-  int kv_pos = 0;
+  // TODO: attention sinks
+	int kv_pos = pos % c.max_seq_len;
+	int kv_len = pos >= c.max_seq_len ? c.max_seq_len : pos + 1;
+
   // forward all layers in order
   for (auto& b : m.blocks) {
     block(s, c, b, pos, kv_pos, kv_len);

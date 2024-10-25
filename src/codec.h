@@ -29,7 +29,7 @@ struct Tensor {
   size_t size;
 
   // Returns 0 if successful, other if failed
-  int from_json(const std::string& name, const json& j, void* bytes_ptr);
+  int from_json(const std::string& name, const json& j, void* bytes_ptr, size_t bytes_size);
 };
 
 struct YALMData {
@@ -40,7 +40,7 @@ struct YALMData {
 
   // TODO: use a vector instead of this C-style array?
   Tensor tensors[MAX_TENSORS];
-  int n_tensors;
+  size_t n_tensors;
 
   // Initialize a YALMData object from a .yalm file which was created by `convert.py`.
   // Returns 0 if successful, other if failed

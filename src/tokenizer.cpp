@@ -2,16 +2,16 @@
 
 #include <string_view>
 
-Tokenizer::Tokenizer(const YALMData& data, int bos_id, int eos_id) {
-  this->bos_id = std::stoi(data.metadata.at("bos_token_id"));
-  this->eos_id = std::stoi(data.metadata.at("eos_token_id"));
+Tokenizer::Tokenizer(const YALMData& data) {
+  this->bos_id = std::stoi(data.metadata.at("bos_token_id").get<std::string>());
+  this->eos_id = std::stoi(data.metadata.at("eos_token_id").get<std::string>());
   // TODO figure out edge cases:
   // Q: should `vocab` include byte fallback tokens?
   // Q: should `vocab` include special tokens, e.g. '<unk>', '<s>', '</s>'?
   for (auto& val : data.metadata.at("tokenizer.tokens")) {
     vocab.push_back(val.get<std::string>());
   }
-  for (int i = 0; i < vocab.size(); i++) {
+  for (size_t i = 0; i < vocab.size(); i++) {
     if (vocab[i] == "<0x00>") {
       byte_fallback_start = i;
     } else if (vocab[i] == "<|eot_id|>" || vocab[i] == "<|end|>" || vocab[i] == "<|im_end|>") {
@@ -19,20 +19,20 @@ Tokenizer::Tokenizer(const YALMData& data, int bos_id, int eos_id) {
     }
   }
   // init byte_pieces
-  for (int i = 0; i < 256; i++) {
+  for (size_t i = 0; i < 256; i++) {
     byte_pieces[i] = (char)i;
   }
   // init vocab trie
-  for (int i = 0; i < vocab.size(); i++) {
+  for (size_t i = 0; i < vocab.size(); i++) {
     const std::string& word = vocab[i];
-    TokenTrie& p = vocab_trie;
+    TokenTrie* p = &vocab_trie;
     for (char c : word) {
-      if (p.children.count(c) == 0) {
-        p.children[c] = {};
+      if (p->children.count(c) == 0) {
+        p->children[c] = std::make_shared<TokenTrie>();
       }
-      p = p.children[c];
+      p = p->children[c].get();
     }
-    p.token_id = i;
+    p->token_id = i;
   }
 }
 
@@ -55,18 +55,18 @@ std::vector<int> Tokenizer::encode(const std::string& text, bool encode_bos) con
     out_tokens.push_back(bos_id);
   }
 
-  for (int i = 0; i < text.size();) {
-    int l = 0;
-    int valid_l = 0;
-    TokenTrie& p = vocab_trie;
-    TokenTrie* valid_p = nullptr;
+  for (size_t i = 0; i < text.size();) {
+    size_t l = 0;
+    size_t valid_l = 0;
+    const TokenTrie* p = &vocab_trie;
+    const TokenTrie* valid_p = nullptr;
     while (i + l < text.size()) {
       char c = text[i+l];
-      if (p.children.count(c)) {
-        p = p.children[c];
+      if (p->children.count(c)) {
+        p = p->children.at(c).get();
         l += 1;
-        if (p.token_id >= 0) {
-          valid_p = &p;
+        if (p->token_id >= 0) {
+          valid_p = p;
           valid_l = l;
         }
       } else {

@@ -7,8 +7,10 @@
 #include <vector>
 #include <unordered_map>
 
+struct TokenTrie;
+
 struct TokenTrie {
-  std::unordered_map<char, TokenTrie> children;
+  std::unordered_map<char, std::shared_ptr<TokenTrie>> children;
   // If non-negative, then this represents the ID of the token formed by the path from the root to this node.
   int token_id = -1;
 };

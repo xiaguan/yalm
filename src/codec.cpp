@@ -4,80 +4,62 @@
 #include <iostream>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
-int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr) {
-  tensor.name = name;
+int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr, size_t bytes_size) {
+  this->name = name;
   size_t dsize = 0;
-  switch (val.value("dtype", "").get<std::string>()) {
-    case "F32": {
-      tensor.dtype = DType::dt_f32;
-      dsize = 4;
-      break;
-    }
-    case "F16": {
-      tensor.dtype = DType::dt_f16;
-      dsize = 2;
-      break;
-    }
-    case "BF16": {
-      tensor.dtype = DType::dt_bf16;
-      dsize = 2;
-      break;
-    }
-    case "F8_E5M2": {
-      tensor.dtype = DType::dt_f8e5m2;
-      dsize = 1;
-      break;
-    }
-    case "F8_E4M3": {
-      tensor.dtype = DType::dt_f8e4m3;
-      dsize = 1;
-      break;
-    }
-    case "I32": {
-      tensor.dtype = DType::dt_i32;
-      dsize = 4;
-      break;
-    }
-    case "I16": {
-      tensor.dtype = DType::dt_i16;
-      dsize = 2;
-      break;
-    }
-    case "I8": {
-      tensor.dtype = DType::dt_i8;
-      dsize = 1;
-      break;
-    }
-    case "U8": {
-      tensor.dtype = DType::dt_u8;
-      dsize = 1;
-      break;
-    }
-    default: {
-      std::cout << "bad dtype" << std::endl;
-      return -1;
-    }
+  std::string dtype_str = val.value("dtype", ""); 
+  if (dtype_str == "F32") {
+    this->dtype = DType::dt_f32;
+    dsize = 4;
+  } else if (dtype_str == "F16") {
+    this->dtype = DType::dt_f16;
+    dsize = 2;
+  } else if (dtype_str == "BF16") {
+    this->dtype = DType::dt_bf16;
+    dsize = 2;
+  } else if (dtype_str == "F8_E5M2") {
+    this->dtype = DType::dt_f8e5m2;
+    dsize = 1;
+  } else if (dtype_str == "F8_E4M3") {
+    this->dtype = DType::dt_f8e4m3;
+    dsize = 1;
+  } else if (dtype_str == "I32") {
+    this->dtype = DType::dt_i32;
+    dsize = 4;
+  } else if (dtype_str == "I16") {
+    this->dtype = DType::dt_i16;
+    dsize = 2;
+  } else if (dtype_str == "I8") {
+    this->dtype = DType::dt_i8;
+    dsize = 1;
+  } else if (dtype_str == "U8") {
+    this->dtype = DType::dt_u8;
+    dsize = 1;
+  } else {
+    std::cout << "bad dtype" << std::endl;
+    return -1;
   }
 
   size_t numel = 1;
   for (size_t i = 0; i < val.at("shape").size() && i < 8; i++) {
-    tensor.shape[i] = val.at("shape")[i].get<int>();
-    numel *= tensor.shape[i];
+    this->shape[i] = val.at("shape")[i].get<int>();
+    numel *= this->shape[i];
   }
   if (val.at("offsets").size() != 2) {
     return -1;
   }
-  int offset_start = val.at("offsets")[0].get<int>();
-  int offset_end = val.at("offsets")[1].get<int>();
+  size_t offset_start = static_cast<size_t>(val.at("offsets")[0].get<int>());
+  size_t offset_end = static_cast<size_t>(val.at("offsets")[1].get<int>());
   if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
     std::cout << "bad offsets" << std::endl;
     return -1;
   }
-  tensor->data = (char*)bytes_ptr + offset_start;
-  tensor->size = offset_end - offset_start;
+  this->data = (char*)bytes_ptr + offset_start;
+  this->size = offset_end - offset_start;
   // validate the shape matches the size
-  if (numel * dsize != tensor->size) {
+  if (numel * dsize != this->size) {
     std::cout << "bad size" << std::endl;
     return -1;
   }
@@ -124,7 +106,7 @@ int YALMData::from_file(const std::string& filename) {
 
   char* json_ptr = (char*)data + sizeof(uint64_t);
 	void* bytes_ptr = (char*)data + sizeof(uint64_t) + json_size;
-	size_t bytes_size = size - sizeof(uint64_t) - json_size;
+  size_t bytes_size = size - sizeof(uint64_t) - json_size;
 
   json_ptr[json_size - 1] = 0; // null-terminate the JSON string
   json header = json::parse(json_ptr);
@@ -139,7 +121,7 @@ int YALMData::from_file(const std::string& filename) {
         return -1;
       }
       Tensor& tensor = tensors[n_tensors++];
-      if (tensor.from_json(key, val, bytes_ptr) != 0) {
+      if (tensor.from_json(key, val, bytes_ptr, bytes_size) != 0) {
         munmap(data, size);
         return -1;
       }
