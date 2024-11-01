@@ -9,6 +9,7 @@ import argparse
 import os
 import json
 import safetensors
+from safetensors.torch import save_file
 import torch
 
 SUPPORTED_ARCHITECTURES = [
@@ -162,7 +163,7 @@ def load_weights(model_files, dtype_str, metadata, tie_word_embeddings):
 if __name__ == "__main__":
   argp = argparse.ArgumentParser()
   argp.add_argument("output", type=str)
-  argp.add_argument("input", type="str", nargs="?")
+  argp.add_argument("input", type=str, nargs="?")
   argp.add_argument("--dtype", type=str, default="fp16", choices=["fp16", "fp8"])
   args = argp.parse_args()
 
@@ -199,4 +200,4 @@ if __name__ == "__main__":
   tensors["tokenizer.scores"] = torch.tensor(scores, dtype=torch.float32)
 
   print(f"Saving {len(tensors)} tensors...")
-  safetensors.torch.save_file(tensors, args.output, metadata.to_dict())
+  save_file(tensors, args.output, metadata.to_dict())
