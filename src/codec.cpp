@@ -44,14 +44,18 @@ int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr,
 
   size_t numel = 1;
   for (size_t i = 0; i < val.at("shape").size() && i < 8; i++) {
+    if (val.at("shape")[i].get<int>() != val.at("shape")[i]) {
+      std::cout << "bad shape" << std::endl;
+      return -1;
+    }
     this->shape[i] = val.at("shape")[i].get<int>();
     numel *= this->shape[i];
   }
-  if (val.at("offsets").size() != 2) {
+  if (val.at("data_offsets").size() != 2) {
     return -1;
   }
-  size_t offset_start = static_cast<size_t>(val.at("offsets")[0].get<int>());
-  size_t offset_end = static_cast<size_t>(val.at("offsets")[1].get<int>());
+  size_t offset_start = static_cast<size_t>(val.at("data_offsets")[0]);
+  size_t offset_end = static_cast<size_t>(val.at("data_offsets")[1]);
   if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
     std::cout << "bad offsets" << std::endl;
     return -1;
