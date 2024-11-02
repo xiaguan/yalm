@@ -64,7 +64,6 @@ class Metadata:
 
 def load_tokens(tokenizer_path, vocab_size):
   tokens = [""] * vocab_size
-  scores = [0] * vocab_size
   with open(tokenizer_path, "r") as f:
     tokenizer = json.load(f)
   
@@ -77,13 +76,6 @@ def load_tokens(tokenizer_path, vocab_size):
   for added in tokenizer["added_tokens"]:
     tokens[added["id"]] = added["content"]
   
-  # Scores are negative merge indices so that earlier merges come first
-  for i, m in enumerate(tokenizer["model"]["merges"]):
-    t1, t2 = m.split(" ")
-    ti = vocab[t1 + t2]
-    if scores[ti] == 0:
-      scores[ti] = -(1 + i)
-  
   # Preprocess tokens into UTF-8 encoding
   for i, t in enumerate(tokens):
     t = t.replace('\u2581', ' ') # sentencepiece uses this character as whitespace
@@ -92,7 +84,7 @@ def load_tokens(tokenizer_path, vocab_size):
     assert b.count(0) == 0 # no null bytes allowed
     tokens[i] = b
   
-  return tokens, scores
+  return tokens
 
 def load_weights(model_files, dtype_str, metadata, tie_word_embeddings):
   weights = {}
@@ -191,13 +183,12 @@ if __name__ == "__main__":
     config = json.load(f)
     metadata = Metadata(config)
 
-  tokens, scores = load_tokens(args.tokenizer, metadata.vocab_size)
+  tokens = load_tokens(args.tokenizer, metadata.vocab_size)
   tensors = load_weights(args.models, args.dtype, metadata, config.get("tie_word_embeddings", None))
 
   # add tokenizer tensors at the end (to maximize the chance of model tensor alignment)
   # note: we concatenate all bytes of all tokens into a single tensor
   tensors["tokenizer.tokens"] = torch.cat([torch.tensor([x for x in b] + [0], dtype=torch.uint8) for b in tokens])
-  tensors["tokenizer.scores"] = torch.tensor(scores, dtype=torch.float32)
 
   print(f"Saving {len(tensors)} tensors...")
   save_file(tensors, args.output, metadata.to_dict())

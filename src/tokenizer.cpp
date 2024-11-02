@@ -1,15 +1,20 @@
 #include "tokenizer.h"
 
-#include <string_view>
-
 Tokenizer::Tokenizer(const YALMData& data) {
   this->bos_id = std::stoi(data.metadata.at("bos_token_id").get<std::string>());
   this->eos_id = std::stoi(data.metadata.at("eos_token_id").get<std::string>());
-  // TODO figure out edge cases:
+  // TODO: figure out edge cases:
   // Q: should `vocab` include byte fallback tokens?
   // Q: should `vocab` include special tokens, e.g. '<unk>', '<s>', '</s>'?
-  for (auto& val : data.metadata.at("tokenizer.tokens")) {
-    vocab.push_back(val.get<std::string>());
+  // TODO: avoid copy by using std::string_view
+  const Tensor& tokens_tensor = data.tensors.at("tokenizer.tokens");
+  char* tokens_tensor_end = (char*)tokens_tensor.data + tokens_tensor.size;
+  for (char* ptr = (char*)tokens_tensor.data; ptr < tokens_tensor_end; ptr++) {
+    char* s = ptr;
+    while (*ptr != '\0' && ptr < tokens_tensor_end) {
+      ptr++;
+    }
+    vocab.emplace_back(s, ptr - s);
   }
   for (size_t i = 0; i < vocab.size(); i++) {
     if (vocab[i] == "<0x00>") {

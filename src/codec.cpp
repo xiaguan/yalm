@@ -120,11 +120,7 @@ int YALMData::from_file(const std::string& filename) {
       metadata = val;
     } else {
       std::cout << "parsing tensor: " << key << std::endl;
-      if (n_tensors >= MAX_TENSORS) {
-        munmap(data, size);
-        return -1;
-      }
-      Tensor& tensor = tensors[n_tensors++];
+      Tensor& tensor = tensors[key];
       if (tensor.from_json(key, val, bytes_ptr, bytes_size) != 0) {
         munmap(data, size);
         return -1;

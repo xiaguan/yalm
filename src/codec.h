@@ -3,6 +3,7 @@
 #include "json.hpp"
 
 #include <string>
+#include <unordered_map>
 
 using json = nlohmann::json;
 
@@ -18,8 +19,6 @@ enum class DType {
 	dt_i8,
 	dt_u8,
 };
-
-constexpr size_t MAX_TENSORS = 1024;
 
 struct Tensor {
   std::string name;
@@ -38,9 +37,7 @@ struct YALMData {
 
   json metadata;
 
-  // TODO: use a vector instead of this C-style array?
-  Tensor tensors[MAX_TENSORS];
-  size_t n_tensors;
+  std::unordered_map<std::string, Tensor> tensors;
 
   // Initialize a YALMData object from a .yalm file which was created by `convert.py`.
   // Returns 0 if successful, other if failed

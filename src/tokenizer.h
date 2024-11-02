@@ -16,10 +16,9 @@ struct TokenTrie {
 };
 
 /*
-A tokenizer vocab will look like this in the metadata of a .yalm file:
+A tokenizer vocab consists of a concatenated tensor with the key "tokenizer.tokens" in the .yalm file.
+Shown as a list of strings:
 ```
-"bos_token_id": "1",
-"eos_token_id": "2",
 "tokenizer.tokens": [
   "<unk>",        // 0
   "<s>",          // 1
@@ -36,8 +35,16 @@ A tokenizer vocab will look like this in the metadata of a .yalm file:
   "in",           // 262
   "er",           // 263
   ...
-],
-"tokenizer.scores": [...]
+]
+```
+In tensor form, it looks like a UTF-8 encoded byte array:
+```
+<unk>\0<s>\0</s>\0<0x00>\0<0x01>\0<0x02>\0...\0<0xFE>\0<0xFF>\0▁▁\0▁▁▁▁\0▁t\0in\0er\0...
+```
+Important token IDs are included in the metadata of the .yalm file:
+```
+"bos_token_id": "1",
+"eos_token_id": "2",
 ```
 */
 
