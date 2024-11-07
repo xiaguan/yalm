@@ -29,6 +29,14 @@ struct Config {
   LayerNormType norm_type;  // norm type
   float qkv_clip;           // clip qkv values to [-clip, clip]
 
+  // Number of bits per weight, e.g. 8 bits for fp8.
+  // Determines type of void* used to store weights.
+  // We don't currently support sub-byte weights, but this can be used for e.g. 4-bit gf4 format later.
+  int weight_dbits;
+  // Data type of the weights according to config, used
+  // to safety check tensor dtype at initialization time.
+  DType weight_dtype;
+
   // If nonzero `context` is supplied, max sequence length is limited to `context`.
   void from_yalm(YALMData& yalm, int context = 0);
 };
@@ -52,8 +60,22 @@ struct Block {
 	void* w3; // (n_experts?, hidden_dim, dim) - GLU weights
 
   // kv cache
-	void* key_cache;   // (seq_len, dim)
-	void* value_cache; // (seq_len, dim)
+	void* key_cache;   // (seq_len, n_kv_heads * head_dim)
+	void* value_cache; // (seq_len, n_kv_heads * head_dim)
+
+  Block(
+    const Config& config,
+    Tensor* rms_att_weight,
+    Tensor* rms_ffn_weight,
+    Tensor* wq,
+    Tensor* wk,
+    Tensor* wv,
+    Tensor* wo,
+    Tensor* w1,
+    Tensor* w2,
+    Tensor* w3,
+  );
+  ~Block();
 };
 
 // Buffer for all state used during a forward pass.
@@ -72,20 +94,14 @@ struct InferenceState {
   float* v;         // (n_kv_heads * head_dim,) - value vectors for latest timestamp
   float* att;       // (n_heads, seq_len) - buffer for attention scores
   // LM head
-  float* logits;    // final output logits
+  float* logits;    // (vocab_size,) - final output logits
+
+  InferenceState(const Config& config);
+  ~InferenceState();
 };
 
 struct Model {
   Config config;
-
-  // TODO: move these to `Config`?
-  // Number of bits per weight, e.g. 8 bits for fp8.
-  // Determines type of void* used to store weights.
-  // We don't currently support sub-byte weights, but this can be used for e.g. 4-bit gf4 format later.
-  int dbits;
-  // Number of bits per kv cache entry.
-  // TODO: currently unused?
-  int kvbits;
 
   std::vector<Block> blocks;
   
@@ -95,4 +111,8 @@ struct Model {
 	float* rms_final_weight; // (dim,)
 	// classifier weights for the logits, on the last layer
 	void* wcls; // (dim, vocab_size)
+
+  Model(YALMData& yalm);
 };
+
+void forward(InferenceState& s, Model& m, int token, int pos);

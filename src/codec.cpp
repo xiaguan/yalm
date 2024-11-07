@@ -71,6 +71,7 @@ int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr,
 }
 
 int YALMData::from_file(const std::string& filename) {
+  std::cout << "loading data from file: " << filename << std::endl;
   int fd = open(filename.c_str(), O_RDONLY);
   if (fd == -1) {
     return -1;
