@@ -3,7 +3,7 @@
 # - Normalizes the config to a common format in the header
 # - Combines any safetensors shards
 # - Reads the token vocabulary into a simpler format
-# - (TODO: Performs quantization to fp8 if specified)
+# - Performs quantization to fp8 if specified
 
 import argparse
 import os
@@ -15,13 +15,17 @@ import torch
 SUPPORTED_ARCHITECTURES = [
   "MistralForCausalLM"
 ]
+SUPPORTED_DTYPES = ["fp32", "fp16", "fp8"]
 
 class Metadata:
-  def __init__(self, config):
+  def __init__(self, config, dtype):
     arch = config["architectures"][0]
     if arch not in SUPPORTED_ARCHITECTURES:
       raise Exception(f"Architecture {arch} is not supported, must be one of {SUPPORTED_ARCHITECTURES}")
     self.arch = arch
+    if dtype not in SUPPORTED_DTYPES:
+      raise Exception(f"Data type {dtype} is not supported, must be one of {SUPPORTED_DTYPES}")
+    self.dtype = dtype
     if arch == "MistralForCausalLM":
       self.dim = config["hidden_size"]
       self.hidden_dim = config["intermediate_size"]
@@ -44,6 +48,7 @@ class Metadata:
   def to_dict(self):
     result = {}
     result["arch"] = self.arch
+    result["dtype"] = self.dtype
     if self.arch == "MistralForCausalLM":
       result["dim"] = str(self.dim)
       result["hidden_dim"] = str(self.hidden_dim)
@@ -87,6 +92,12 @@ def load_tokens(tokenizer_path, vocab_size):
   return tokens
 
 def load_weights(model_files, dtype_str, metadata, tie_word_embeddings):
+  """
+  Load all weights from the model files in huggingface format into a dictionary of tensors,
+  normalizing the attention weights, and casting all tensors (except for all layer norm weights,
+  which are converted to float32) to the specified dtype.
+  TODO: Why do layer norm weights have to be fp32?
+  """
   weights = {}
   for model_path in model_files:
     ext = os.path.splitext(model_path)[1]
@@ -114,7 +125,7 @@ def load_weights(model_files, dtype_str, metadata, tie_word_embeddings):
     w = torch.cat([wr, wk], dim=1)
     return torch.flatten(w, 0, 1)
 
-  dtype = {"fp16": torch.float16, "fp8": torch.float8_e5m2}[dtype_str]
+  dtype = {"fp32": torch.float32, "fp16": torch.float16, "fp8": torch.float8_e5m2}[dtype_str]
 
   # convert weights
   progress = 0
@@ -150,13 +161,14 @@ def load_weights(model_files, dtype_str, metadata, tie_word_embeddings):
   if tie_word_embeddings == False:
     tensors["model.output.weight"] = conv(weights["lm_head.weight"])
   
+  print() # newline
   return tensors
 
 if __name__ == "__main__":
   argp = argparse.ArgumentParser()
   argp.add_argument("output", type=str)
   argp.add_argument("input", type=str, nargs="?")
-  argp.add_argument("--dtype", type=str, default="fp16", choices=["fp16", "fp8"])
+  argp.add_argument("--dtype", type=str, default="fp16", choices=SUPPORTED_DTYPES)
   args = argp.parse_args()
 
   if args.input is not None:
@@ -181,7 +193,7 @@ if __name__ == "__main__":
 
   with open(args.config, "r") as f:
     config = json.load(f)
-    metadata = Metadata(config)
+    metadata = Metadata(config, args.dtype)
 
   tokens = load_tokens(args.tokenizer, metadata.vocab_size)
   tensors = load_weights(args.models, args.dtype, metadata, config.get("tie_word_embeddings", None))
