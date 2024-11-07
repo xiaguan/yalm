@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
 
   // Hydrate KV cache by forwarding model on all prompt tokens and discarding output.
   // This also generates output logits for the last token.
-  for (int pos = 0; pos < encoding.size(); pos++) {
+  for (size_t pos = 0; pos < encoding.size(); pos++) {
     int token_id = encoding[pos];
     forward(state, model, token_id, pos);
   }

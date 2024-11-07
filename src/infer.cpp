@@ -239,7 +239,7 @@ static void block(
 
 void forward(InferenceState& s, Model& m, int token, int pos) {
   // TODO: support weights other than float32 or more rigorously check that they are float32
-  assert(m.weight_dbits == 32);
+  assert(m.config.weight_dbits == 32);
   const Config& c = m.config;
 
   // copy the token embedding into `x`

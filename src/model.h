@@ -73,7 +73,7 @@ struct Block {
     Tensor* wo,
     Tensor* w1,
     Tensor* w2,
-    Tensor* w3,
+    Tensor* w3
   );
   ~Block();
 };
