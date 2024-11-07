@@ -145,8 +145,8 @@ Block::Block(
 }
 
 Block::~Block() {
-  delete[] key_cache;
-  delete[] value_cache;
+  if (key_cache) delete[] key_cache;
+  if (value_cache) delete[] value_cache;
 }
 
 InferenceState::InferenceState(const Config& config) {
@@ -163,16 +163,16 @@ InferenceState::InferenceState(const Config& config) {
 }
 
 InferenceState::~InferenceState() {
-  delete[] x;
-  delete[] xb;
-  delete[] xb2;
-  delete[] hb;
-  delete[] hb2;
-  delete[] q;
-  delete[] k;
-  delete[] v;
-  delete[] att;
-  delete[] logits;
+  if (x) delete[] x;
+  if (xb) delete[] xb;
+  if (xb2) delete[] xb2;
+  if (hb) delete[] hb;
+  if (hb2) delete[] hb2;
+  if (q) delete[] q;
+  if (k) delete[] k;
+  if (v) delete[] v;
+  if (att) delete[] att;
+  if (logits) delete[] logits;
 }
 
 Model::Model(YALMData& yalm) {
