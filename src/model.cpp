@@ -3,7 +3,7 @@
 #include "json.hpp"
 #include <algorithm>
 #include <cfloat>
-#include <format>
+#include "fmt/format.h"
 #include <iostream>
 #include <limits.h>
 #include <string>
@@ -75,10 +75,10 @@ void* check_tensor(Tensor* tensor, DType weight_dtype, int[4] shape) {
   if (tensor->dtype != weight_dtype || memcmp(tensor->shape, shape, 4 * sizeof(int)) != 0) {
     std::cerr << "FATAL: tensor mismatch" << std::endl;
     std::cerr 
-      << std::format("expected: dtype={}, shape=[{},{},{},{}]", weight_dtype, shape[0], shape[1], shape[2], shape[3]) 
+      << fmt::format("expected: dtype={}, shape=[{},{},{},{}]", weight_dtype, shape[0], shape[1], shape[2], shape[3]) 
       << std::endl;
     std::cerr 
-      << std::format("got: dtype={}, shape=[{},{},{},{}]", tensor->dtype, tensor->shape[0], tensor->shape[1], tensor->shape[2], tensor->shape[3]) 
+      << fmt::format("got: dtype={}, shape=[{},{},{},{}]", tensor->dtype, tensor->shape[0], tensor->shape[1], tensor->shape[2], tensor->shape[3]) 
       << std::endl;
     assert(false);
   }
@@ -187,15 +187,15 @@ Model::Model(YALMData& yalm) {
   for (int i = 0; i < config.n_layers; ++i) {
     blocks.emplace_back(
       config,
-      get_tensor(yalm, std::format("model.layers.{}.attn.norm.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.mlp.norm.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.attn.wq.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.attn.wk.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.attn.wv.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.attn.wo.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.mlp.w1.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.mlp.w2.weight", i)),
-      get_tensor(yalm, std::format("model.layers.{}.mlp.w3.weight", i))
+      get_tensor(yalm, fmt::format("model.layers.{}.attn.norm.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.mlp.norm.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.attn.wq.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.attn.wk.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.attn.wv.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.attn.wo.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.mlp.w1.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.mlp.w2.weight", i)),
+      get_tensor(yalm, fmt::format("model.layers.{}.mlp.w3.weight", i))
     );
   }
 
