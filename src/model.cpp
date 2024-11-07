@@ -2,6 +2,7 @@
 
 #include "json.hpp"
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include "fmt/format.h"
 #include <iostream>
@@ -53,39 +54,39 @@ void Config::from_yalm(YALMData& yalm, int context) {
   std::string dtype = yalm.metadata.at("dtype").get<std::string>();
   if (dtype == "fp32") {
     weight_dbits = 32;
-    weight_dtype = dt_f32;
+    weight_dtype = DType::dt_f32;
   } else if (dtype == "fp16") {
     weight_dbits = 16;
-    weight_dtype = dt_f16;
+    weight_dtype = DType::dt_f16;
   } else if (dtype == "fp8") {
     weight_dbits = 8;
-    weight_dtype = dt_f8e5m2;
+    weight_dtype = DType::dt_f8e5m2;
   } else {
     std::cerr << "FATAL: unsupported dtype: " << dtype << std::endl;
     assert(false);
   }
 }
 
-void* check_tensor(Tensor* tensor, DType weight_dtype, int[4] shape) {
+void* check_tensor(const Tensor* tensor, DType weight_dtype, std::array<int, 4> shape) {
   if (tensor == nullptr) {
     std::cerr << "FATAL: missing tensor" << std::endl;
     assert(false);
     return nullptr;
   }
-  if (tensor->dtype != weight_dtype || memcmp(tensor->shape, shape, 4 * sizeof(int)) != 0) {
+  if (tensor->dtype != weight_dtype || tensor->shape != shape) {
     std::cerr << "FATAL: tensor mismatch" << std::endl;
     std::cerr 
-      << fmt::format("expected: dtype={}, shape=[{},{},{},{}]", weight_dtype, shape[0], shape[1], shape[2], shape[3]) 
+      << fmt::format("expected: dtype={}, shape=[{},{},{},{}]", dtype_to_string(weight_dtype), shape[0], shape[1], shape[2], shape[3]) 
       << std::endl;
     std::cerr 
-      << fmt::format("got: dtype={}, shape=[{},{},{},{}]", tensor->dtype, tensor->shape[0], tensor->shape[1], tensor->shape[2], tensor->shape[3]) 
+      << fmt::format("got: dtype={}, shape=[{},{},{},{}]", dtype_to_string(tensor->dtype), tensor->shape[0], tensor->shape[1], tensor->shape[2], tensor->shape[3]) 
       << std::endl;
     assert(false);
   }
   return tensor->data;
 };
 
-Tensor* get_tensor(const YALMData& yalm, const std::string& key) {
+const Tensor* get_tensor(const YALMData& yalm, const std::string& key) {
   auto it = yalm.tensors.find(key);
   if (it == yalm.tensors.end()) {
     std::cerr << "FATAL: missing tensor: " << key << std::endl;
@@ -98,15 +99,15 @@ Tensor* get_tensor(const YALMData& yalm, const std::string& key) {
 
 Block::Block(
   const Config& config,
-  Tensor* rms_att_weight,
-  Tensor* rms_ffn_weight,
-  Tensor* wq,
-  Tensor* wk,
-  Tensor* wv,
-  Tensor* wo,
-  Tensor* w1,
-  Tensor* w2,
-  Tensor* w3,
+  const Tensor* rms_att_weight,
+  const Tensor* rms_ffn_weight,
+  const Tensor* wq,
+  const Tensor* wk,
+  const Tensor* wv,
+  const Tensor* wo,
+  const Tensor* w1,
+  const Tensor* w2,
+  const Tensor* w3
 ) {
 
   this->rms_att_weight = static_cast<float*>(check_tensor(
@@ -176,7 +177,7 @@ InferenceState::~InferenceState() {
 
 Model::Model(YALMData& yalm) {
   config.from_yalm(yalm);
-  std::cout << "loading model with dtype: " << config.weight_dtype << std::endl;
+  std::cout << "loading model with dtype: " << dtype_to_string(config.weight_dtype) << std::endl;
 
   token_embedding_table = check_tensor(
     get_tensor(yalm, "model.embed.weight"), 
@@ -199,11 +200,11 @@ Model::Model(YALMData& yalm) {
     );
   }
 
-  rms_final_weight = check_tensor(
+  rms_final_weight = static_cast<float*>(check_tensor(
     get_tensor(yalm, "model.norm.weight"), 
     DType::dt_f32, 
     {config.dim, 1, 1, 1}
-  );
+  ));
   wcls = check_tensor(
     get_tensor(yalm, "model.output.weight"), 
     config.weight_dtype, 

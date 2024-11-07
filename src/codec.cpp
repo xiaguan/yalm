@@ -6,6 +6,21 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+std::string dtype_to_string(DType dtype) {
+  switch (dtype) {
+    case DType::dt_f32: return "F32";
+    case DType::dt_f16: return "F16";
+    case DType::dt_bf16: return "BF16";
+    case DType::dt_f8e5m2: return "F8_E5M2";
+    case DType::dt_f8e4m3: return "F8_E4M3";
+    case DType::dt_i32: return "I32";
+    case DType::dt_i16: return "I16";
+    case DType::dt_i8: return "I8";
+    case DType::dt_u8: return "U8";
+  }
+  return "UNKNOWN";
+}
+
 int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr, size_t bytes_size) {
   this->name = name;
   size_t dsize = 0;
@@ -43,13 +58,16 @@ int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr,
   }
 
   size_t numel = 1;
-  for (size_t i = 0; i < val.at("shape").size() && i < 8; i++) {
+  if (val.at("shape").size() > 4) {
+    std::cout << "shape exceeds 4 dimensions" << std::endl;
+  }
+  for (size_t i = 0; i < val.at("shape").size() && i < 4; i++) {
     if (val.at("shape")[i].get<int>() != val.at("shape")[i]) {
       std::cout << "bad shape" << std::endl;
       return -1;
     }
-    this->shape[i] = val.at("shape")[i].get<int>();
-    numel *= this->shape[i];
+    shape[i] = val.at("shape")[i].get<int>();
+    numel *= shape[i];
   }
   if (val.at("data_offsets").size() != 2) {
     return -1;

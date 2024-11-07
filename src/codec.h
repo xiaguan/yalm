@@ -2,6 +2,7 @@
 
 #include "json.hpp"
 
+#include <array>
 #include <string>
 #include <unordered_map>
 
@@ -19,11 +20,12 @@ enum class DType {
 	dt_i8,
 	dt_u8,
 };
+std::string dtype_to_string(DType dtype);
 
 struct Tensor {
   std::string name;
   DType dtype;
-  int shape[8] = {}; // Initialize the shape array with zeros
+  std::array<int, 4> shape = {0, 0, 0, 0};
   void* data = nullptr;
   size_t size;
 

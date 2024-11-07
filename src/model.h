@@ -60,20 +60,20 @@ struct Block {
 	void* w3; // (n_experts?, hidden_dim, dim) - GLU weights
 
   // kv cache
-	void* key_cache;   // (seq_len, n_kv_heads * head_dim)
-	void* value_cache; // (seq_len, n_kv_heads * head_dim)
+	float* key_cache;   // (seq_len, n_kv_heads * head_dim)
+	float* value_cache; // (seq_len, n_kv_heads * head_dim)
 
   Block(
     const Config& config,
-    Tensor* rms_att_weight,
-    Tensor* rms_ffn_weight,
-    Tensor* wq,
-    Tensor* wk,
-    Tensor* wv,
-    Tensor* wo,
-    Tensor* w1,
-    Tensor* w2,
-    Tensor* w3
+    const Tensor* rms_att_weight,
+    const Tensor* rms_ffn_weight,
+    const Tensor* wq,
+    const Tensor* wk,
+    const Tensor* wv,
+    const Tensor* wo,
+    const Tensor* w1,
+    const Tensor* w2,
+    const Tensor* w3
   );
   ~Block();
 };

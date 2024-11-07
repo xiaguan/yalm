@@ -8,8 +8,13 @@ BUILD=build
 
 # compile .c, .cpp, .cu files
 SOURCES=$(wildcard src/*.c)
+SOURCES+=$(wildcard src/*.cc)
 SOURCES+=$(wildcard src/*.cpp)
 SOURCES+=$(wildcard src/*.cu)
+SOURCES+=$(wildcard vendor/*.c)
+SOURCES+=$(wildcard vendor/*.cc)
+SOURCES+=$(wildcard vendor/*.cpp)
+SOURCES+=$(wildcard vendor/*.cu)
 
 OBJECTS=$(SOURCES:%=$(BUILD)/%.o)
 BINARY=$(BUILD)/main
@@ -47,6 +52,10 @@ $(BUILD)/%.c.o: %.c
 	$(CXX) $< $(CFLAGS) -c -MMD -MP -o $@
 
 $(BUILD)/%.cpp.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $< $(CFLAGS) -c -MMD -MP -o $@
+
+$(BUILD)/%.cc.o: %.cc
 	@mkdir -p $(dir $@)
 	$(CXX) $< $(CFLAGS) -c -MMD -MP -o $@
 

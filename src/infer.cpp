@@ -175,8 +175,8 @@ static void block(
   rope(s.k, kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
   
   // key and value point to the kv cache
-  float* kb = (float*)b.key_cache;
-  float* vb = (float*)b.value_cache;
+  float* kb = b.key_cache;
+  float* vb = b.value_cache;
   // update kv cache
   for (int i = 0; i < kv_dim; ++i) {
     kb[kv_pos * kv_dim + i] = s.k[i];
