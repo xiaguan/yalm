@@ -74,7 +74,7 @@ void* check_tensor(const Tensor* tensor, DType weight_dtype, std::array<int, 4> 
     return nullptr;
   }
   if (tensor->dtype != weight_dtype || tensor->shape != shape) {
-    std::cerr << "FATAL: tensor mismatch" << std::endl;
+    std::cerr << "FATAL: tensor mismatch for " << tensor->name << std::endl;
     std::cerr 
       << fmt::format("expected: dtype={}, shape=[{},{},{},{}]", dtype_to_string(weight_dtype), shape[0], shape[1], shape[2], shape[3]) 
       << std::endl;
