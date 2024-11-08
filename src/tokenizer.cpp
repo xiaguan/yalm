@@ -92,3 +92,17 @@ std::vector<int> Tokenizer::encode(const std::string& text, bool encode_bos) con
 
   return out_tokens;
 }
+
+std::string Tokenizer::encoding_to_debug_string(const std::vector<int>& encoding) const {
+  std::string token_encoding_debug_str = "";
+  for (int token_id : encoding) {
+    if (token_id == bos_id) {
+      token_encoding_debug_str += "[<s>:" + std::to_string(token_id) + "]";
+    } else if (token_id == eos_id) {
+      token_encoding_debug_str += "[</s>:" + std::to_string(token_id) + "]";
+    } else {
+      token_encoding_debug_str += "[" + vocab[token_id] + ":" + std::to_string(token_id) + "]";
+    }
+  }
+  return token_encoding_debug_str;
+}

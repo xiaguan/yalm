@@ -68,4 +68,5 @@ struct Tokenizer {
 
   std::vector<int> encode(const std::string& text, bool encode_bos) const;
   std::string decode_one(int prev_token, int token) const;
+  std::string encoding_to_debug_string(const std::vector<int>& encoding) const;
 };
