@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
   // - Sample + decode output logits
   // - Forward the model
   for (int i = 0; i < num_steps; i++) {
-    int token_id = sampler.sample_argmax(state.logits);
+    int token_id = sampler.sample_argmax(state.logits());
     std::string token_str = tokenizer.decode_one(encoding.back(), token_id);
     std::cout << token_str;
     encoding.push_back(token_id);

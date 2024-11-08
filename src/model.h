@@ -2,6 +2,7 @@
 
 #include "codec.h"
 
+#include <memory>
 #include <vector>
 
 enum class ActivationType {
@@ -44,25 +45,6 @@ struct Config {
 struct Block {
   /* Transformer Block */
 
-  // weights for norms
-	float* rms_att_weight = nullptr; // (dim) rmsnorm weights
-	float* rms_ffn_weight = nullptr; // (dim)
-
-  // weights for self-attention matmuls
-	void* wq = nullptr; // (n_heads * head_dim, dim)
-	void* wk = nullptr; // (n_kv_heads * head_dim, dim)
-	void* wv = nullptr; // (n_kv_heads * head_dim, dim)
-	void* wo = nullptr; // (dim, n_heads * head_dim)
-	
-  // weights for ffn
-	void* w1 = nullptr; // (n_experts?, hidden_dim, dim)
-	void* w2 = nullptr; // (n_experts?, dim, hidden_dim)
-	void* w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
-
-  // kv cache
-	float* key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
-	float* value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
-
   Block(
     const Config& config,
     const Tensor* rms_att_weight,
@@ -75,29 +57,74 @@ struct Block {
     const Tensor* w2,
     const Tensor* w3
   );
-  ~Block();
+
+  float* rms_att_weight() const { return _rms_att_weight; }
+  float* rms_ffn_weight() const { return _rms_ffn_weight; }
+  void* wq() const { return _wq; }
+  void* wk() const { return _wk; }
+  void* wv() const { return _wv; }
+  void* wo() const { return _wo; }
+  void* w1() const { return _w1; }
+  void* w2() const { return _w2; }
+  void* w3() const { return _w3; }
+  float* key_cache() const { return _key_cache.get(); }
+  float* value_cache() const { return _value_cache.get(); }
+
+private:
+  // weights for norms
+	float* _rms_att_weight = nullptr; // (dim) rmsnorm weights
+	float* _rms_ffn_weight = nullptr; // (dim)
+
+  // weights for self-attention matmuls
+	void* _wq = nullptr; // (n_heads * head_dim, dim)
+	void* _wk = nullptr; // (n_kv_heads * head_dim, dim)
+	void* _wv = nullptr; // (n_kv_heads * head_dim, dim)
+	void* _wo = nullptr; // (dim, n_heads * head_dim)
+	
+  // weights for ffn
+	void* _w1 = nullptr; // (n_experts?, hidden_dim, dim)
+	void* _w2 = nullptr; // (n_experts?, dim, hidden_dim)
+	void* _w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
+
+  // kv cache
+	std::shared_ptr<float[]> _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
+	std::shared_ptr<float[]> _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
 };
 
 // Buffer for all state used during a forward pass.
 // Members are reused across subsequent blocks and passes.
 // This lets us avoid allocations during inference.
 struct InferenceState {
-  // current activations
-  float* x = nullptr;         // (dim,) - latest activation
-  float* xb = nullptr;        // (dim,) - activation inside a residual branch
-  // TODO: do we need xb2?
-  float* xb2 = nullptr;       // (dim,) - activation inside a residual branch (second slot)
-  float* hb = nullptr;        // (hidden_dim,) - buffer for hidden dimension in feedforward network
-  float* hb2 = nullptr;       // (hidden_dim,) - buffer for hidden dimension in feedforward network (second slot)
-  float* q = nullptr;         // (n_heads * head_dim,) - query vectors for latest timestamp
-  float* k = nullptr;         // (n_kv_heads * head_dim,) - key vectors for latest timestamp
-  float* v = nullptr;         // (n_kv_heads * head_dim,) - value vectors for latest timestamp
-  float* att = nullptr;       // (n_heads, seq_len) - buffer for attention scores
-  // LM head
-  float* logits = nullptr;    // (vocab_size,) - final output logits
-
   InferenceState(const Config& config);
-  ~InferenceState();
+
+  // current activations
+  float* x() const { return _x.get(); }
+  float* xb() const { return _xb.get(); }
+  // TODO: do we need xb2?
+  float* xb2() const { return _xb2.get(); }
+  float* hb() const { return _hb.get(); }
+  float* hb2() const { return _hb2.get(); }
+  float* q() const { return _q.get(); }
+  float* k() const { return _k.get(); }
+  float* v() const { return _v.get(); }
+  float* att() const { return _att.get(); }
+  // LM head
+  float* logits() const { return _logits.get(); }
+
+private:
+  // current activations
+  std::unique_ptr<float[]> _x = nullptr;         // (dim,) - latest activation
+  std::unique_ptr<float[]> _xb = nullptr;        // (dim,) - activation inside a residual branch
+  // TODO: do we need xb2?
+  std::unique_ptr<float[]> _xb2 = nullptr;       // (dim,) - activation inside a residual branch (second slot)
+  std::unique_ptr<float[]> _hb = nullptr;        // (hidden_dim,) - buffer for hidden dimension in feedforward network
+  std::unique_ptr<float[]> _hb2 = nullptr;       // (hidden_dim,) - buffer for hidden dimension in feedforward network (second slot)
+  std::unique_ptr<float[]> _q = nullptr;         // (n_heads * head_dim,) - query vectors for latest timestamp
+  std::unique_ptr<float[]> _k = nullptr;         // (n_kv_heads * head_dim,) - key vectors for latest timestamp
+  std::unique_ptr<float[]> _v = nullptr;         // (n_kv_heads * head_dim,) - value vectors for latest timestamp
+  std::unique_ptr<float[]> _att = nullptr;       // (n_heads, seq_len) - buffer for attention scores
+  // LM head
+  std::unique_ptr<float[]> _logits = nullptr;    // (vocab_size,) - final output logits
 };
 
 struct Model {

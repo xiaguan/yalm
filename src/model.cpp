@@ -110,69 +110,51 @@ Block::Block(
   const Tensor* w3
 ) {
 
-  this->rms_att_weight = static_cast<float*>(check_tensor(
+  _rms_att_weight = static_cast<float*>(check_tensor(
     rms_att_weight, DType::dt_f32, {config.dim, 0, 0, 0}
   ));
-  this->rms_ffn_weight = static_cast<float*>(check_tensor(
+  _rms_ffn_weight = static_cast<float*>(check_tensor(
     rms_ffn_weight, DType::dt_f32, {config.dim, 0, 0, 0}
   ));
 
-  this->wq = check_tensor(
+  _wq = check_tensor(
     wq, config.weight_dtype, {config.n_heads * config.head_dim, config.dim, 0, 0}
   );
-  this->wk = check_tensor(
+  _wk = check_tensor(
     wk, config.weight_dtype, {config.n_kv_heads * config.head_dim, config.dim, 0, 0}
   );
-  this->wv = check_tensor(
+  _wv = check_tensor(
     wv, config.weight_dtype, {config.n_kv_heads * config.head_dim, config.dim, 0, 0}
   );
-  this->wo = check_tensor(
+  _wo = check_tensor(
     wo, config.weight_dtype, {config.dim, config.n_heads * config.head_dim, 0, 0}
   );
 
-  this->w1 = check_tensor(
+  _w1 = check_tensor(
     w1, config.weight_dtype, {config.hidden_dim, config.dim, 0, 0}
   );
-  this->w2 = check_tensor(
+  _w2 = check_tensor(
     w2, config.weight_dtype, {config.dim, config.hidden_dim, 0, 0}
   );
-  this->w3 = check_tensor(
+  _w3 = check_tensor(
     w3, config.weight_dtype, {config.hidden_dim, config.dim, 0, 0}
   );
 
-  this->key_cache = new float[config.max_seq_len * config.n_kv_heads * config.head_dim]();
-  this->value_cache = new float[config.max_seq_len * config.n_kv_heads * config.head_dim]();
-}
-
-Block::~Block() {
-  if (key_cache) delete[] key_cache;
-  if (value_cache) delete[] value_cache;
+  _key_cache.reset(new float[config.max_seq_len * config.n_kv_heads * config.head_dim]());
+  _value_cache.reset(new float[config.max_seq_len * config.n_kv_heads * config.head_dim]());
 }
 
 InferenceState::InferenceState(const Config& config) {
-  x = new float[config.dim]();
-  xb = new float[config.dim]();
-  xb2 = new float[config.dim]();
-  hb = new float[config.hidden_dim]();
-  hb2 = new float[config.hidden_dim]();
-  q = new float[config.n_heads * config.head_dim]();
-  k = new float[config.n_kv_heads * config.head_dim]();
-  v = new float[config.n_kv_heads * config.head_dim]();
-  att = new float[config.n_heads * config.max_seq_len]();
-  logits = new float[config.vocab_size]();
-}
-
-InferenceState::~InferenceState() {
-  if (x) delete[] x;
-  if (xb) delete[] xb;
-  if (xb2) delete[] xb2;
-  if (hb) delete[] hb;
-  if (hb2) delete[] hb2;
-  if (q) delete[] q;
-  if (k) delete[] k;
-  if (v) delete[] v;
-  if (att) delete[] att;
-  if (logits) delete[] logits;
+  _x.reset(new float[config.dim]());
+  _xb.reset(new float[config.dim]());
+  _xb2.reset(new float[config.dim]());
+  _hb.reset(new float[config.hidden_dim]());
+  _hb2.reset(new float[config.hidden_dim]());
+  _q.reset(new float[config.n_heads * config.head_dim]());
+  _k.reset(new float[config.n_kv_heads * config.head_dim]());
+  _v.reset(new float[config.n_kv_heads * config.head_dim]());
+  _att.reset(new float[config.n_heads * config.max_seq_len]());
+  _logits.reset(new float[config.vocab_size]());
 }
 
 Model::Model(YALMData& yalm) {

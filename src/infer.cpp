@@ -134,7 +134,7 @@ static void attn(
 
 // Compute forward pass for a single block and update the inference state accordingly.
 // PRECONDITIONS: 
-// - `s.x` contains the input to the block. Output will also go here.
+// - `s.x()` contains the input to the block. Output will also go here.
 // - The model weights are FP32.
 // - Block KV cache is hydrated.
 static void block(
@@ -148,7 +148,7 @@ static void block(
   // attention pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm(s.xb, s.x, b.rms_att_weight, c.dim, c.norm_eps);
+      rmsnorm(s.xb(), s.x(), b.rms_att_weight(), c.dim, c.norm_eps);
       break;
     }
   }
@@ -157,30 +157,30 @@ static void block(
   int kv_dim = c.n_kv_heads * c.head_dim;
 
   // qkv matmuls for this position
-  matmul(s.q, s.xb, (float*)b.wq, c.dim, q_dim);
-  matmul(s.k, s.xb, (float*)b.wk, c.dim, kv_dim);
-  matmul(s.v, s.xb, (float*)b.wv, c.dim, kv_dim);
+  matmul(s.q(), s.xb(), (float*)b.wq(), c.dim, q_dim);
+  matmul(s.k(), s.xb(), (float*)b.wk(), c.dim, kv_dim);
+  matmul(s.v(), s.xb(), (float*)b.wv(), c.dim, kv_dim);
 
   // some models require clipping qkv values
   for (int i = 0; i < q_dim; ++i) {
-    s.q[i] = clip(s.q[i], c.qkv_clip);
+    s.q()[i] = clip(s.q()[i], c.qkv_clip);
   }
   for (int i = 0; i < kv_dim; ++i) {
-    s.k[i] = clip(s.k[i], c.qkv_clip);
-    s.v[i] = clip(s.v[i], c.qkv_clip);
+    s.k()[i] = clip(s.k()[i], c.qkv_clip);
+    s.v()[i] = clip(s.v()[i], c.qkv_clip);
   }
 
   // RoPE relative positional encoding: complex-valued rotate q and k in each head
-  rope(s.q, q_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
-  rope(s.k, kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
+  rope(s.q(), q_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
+  rope(s.k(), kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
   
   // key and value point to the kv cache
-  float* kb = b.key_cache;
-  float* vb = b.value_cache;
+  float* kb = b.key_cache();
+  float* vb = b.value_cache();
   // update kv cache
   for (int i = 0; i < kv_dim; ++i) {
-    kb[kv_pos * kv_dim + i] = s.k[i];
-    vb[kv_pos * kv_dim + i] = s.v[i];
+    kb[kv_pos * kv_dim + i] = s.k()[i];
+    vb[kv_pos * kv_dim + i] = s.v()[i];
   }
 
   // Multihead attention. Iterate over all heads.
@@ -188,52 +188,52 @@ static void block(
   int h;
   for (h = 0; h < c.n_heads; ++h) {
     int head_offset = h * c.head_dim;
-    float* qh = s.q + head_offset;
+    float* qh = s.q() + head_offset;
     int kv_head_offset = (h / q_per_kv_head) * c.head_dim;
     float* kh = kb + kv_head_offset;
     float* vh = vb + kv_head_offset;
-    attn(s.xb2 + head_offset, s.att, qh, kh, vh, c.head_dim, c.n_kv_heads, kv_len);
+    attn(s.xb2() + head_offset, s.att(), qh, kh, vh, c.head_dim, c.n_kv_heads, kv_len);
   }
 
   // final matmul to get output of the attention, using `hb` as temp storage
-  matmul(s.hb, s.xb2, (float*)b.wo, q_dim, c.dim);
+  matmul(s.hb(), s.xb2(), (float*)b.wo(), q_dim, c.dim);
 
   // residual connection back into x
   for (int i = 0; i < c.dim; ++i) {
-    s.x[i] += s.hb[i];
+    s.x()[i] += s.hb()[i];
   }
   
   // ffn pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm(s.xb, s.x, b.rms_ffn_weight, c.dim, c.norm_eps);
+      rmsnorm(s.xb(), s.x(), b.rms_ffn_weight(), c.dim, c.norm_eps);
       break;
     }
   }
 
   // mix self.w2(F.silu(self.w1(x)) * self.w3(x))
   // Note this is a feedforward with a GLU, not a simple MLP.
-  matmul(s.hb, s.xb, (float*)b.w1, c.dim, c.hidden_dim);
-  matmul(s.hb2, s.xb, (float*)b.w3, c.dim, c.hidden_dim);
+  matmul(s.hb(), s.xb(), (float*)b.w1(), c.dim, c.hidden_dim);
+  matmul(s.hb2(), s.xb(), (float*)b.w3(), c.dim, c.hidden_dim);
   switch (c.act) {
     case ActivationType::GELU: {
       for (int i = 0; i < c.hidden_dim; ++i) {
-        s.hb[i] = gelu(s.hb[i]) * s.hb2[i];
+        s.hb()[i] = gelu(s.hb()[i]) * s.hb2()[i];
       }
       break;
     }
     case ActivationType::SILU: {
       for (int i = 0; i < c.hidden_dim; ++i) {
-        s.hb[i] = silu(s.hb[i]) * s.hb2[i];
+        s.hb()[i] = silu(s.hb()[i]) * s.hb2()[i];
       }
       break;
     }
   }
 
-  matmul(s.xb2, s.hb, (float*)b.w2, c.hidden_dim, c.dim);
+  matmul(s.xb2(), s.hb(), (float*)b.w2(), c.hidden_dim, c.dim);
   // residual connection back into x
   for (int i = 0; i < c.dim; ++i) {
-    s.x[i] += s.xb2[i];
+    s.x()[i] += s.xb2()[i];
   }
 }
 
@@ -245,7 +245,7 @@ void forward(InferenceState& s, Model& m, int token, int pos) {
   // copy the token embedding into `x`
   float* token_embedding_table = (float*)m.token_embedding_table;
   for (int i = 0; i < c.dim; ++i) {
-    s.x[i] = token_embedding_table[token * c.dim + i];
+    s.x()[i] = token_embedding_table[token * c.dim + i];
   }
 
   // TODO: attention sinks
@@ -260,11 +260,11 @@ void forward(InferenceState& s, Model& m, int token, int pos) {
   // final layer norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm(s.x, s.x, m.rms_final_weight, c.dim, c.norm_eps);
+      rmsnorm(s.x(), s.x(), m.rms_final_weight, c.dim, c.norm_eps);
       break;
     }
   }
 
   // classifier into logits
-  matmul(s.logits, s.x, (float*)m.wcls, c.dim, c.vocab_size);
+  matmul(s.logits(), s.x(), (float*)m.wcls, c.dim, c.vocab_size);
 }
