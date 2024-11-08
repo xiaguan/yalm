@@ -1,5 +1,8 @@
+#include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdio.h>
 
 #include "fmt/format.h"
@@ -14,15 +17,23 @@ void error_usage() {
 	fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
 	fprintf(stderr, "Example: run model.yalm -i \"Q: What is the meaning of life?\"\n");
 	fprintf(stderr, "Options:\n");
-	fprintf(stderr, "  -i <string> input prompt\n");
-  fprintf(stderr, "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len, -1 = infinite\n");
+  fprintf(stderr, "  -m [completion,perplexity] which mode to run in (default - completion)\n");
+  fprintf(stderr, "  Choose one:\n");
+	fprintf(stderr, "    -i <string> input prompt\n");
+  fprintf(stderr, "    -f <filepath> input file with prompt\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Completion mode options:\n");
+  fprintf(stderr, "  -n <int>    number of steps to run for in completion mode, default 256. 0 = max_seq_len, -1 = infinite\n");
 	exit(1);
 }
 
 int main(int argc, char* argv[]) {
-  // default params
   std::string checkpoint_path = "";    // e.g. out/model.bin
+  // Options
+  std::string mode = "completion";     // completion or perplexity
   std::string prompt = "";             // prompt string
+  std::string prompt_path = "";        // prompt file path
+  // Completion mode options
   int num_steps = 256;                 // number of steps to run for
 
 	if (argc >= 2) {
@@ -43,13 +54,32 @@ int main(int argc, char* argv[]) {
 		} // must be -x (one dash, one letter)
 
 		// read in the args
-		if (argv[i][1] == 'i') {
+		if (argv[i][1] == 'm') {
+      if (i + 1 >= argc) {
+        error_usage();
+      }
+      mode = argv[i + 1];
+      if (std::string("completion").starts_with(mode)) {
+        mode = "completion";
+      } else if (std::string("perplexity").starts_with(mode)) {
+        mode = "perplexity";
+      } else {
+        error_usage();
+      }
+      i += 2;
+    } else if (argv[i][1] == 'i') {
       if (i + 1 >= argc) {
         error_usage();
       }
       prompt = argv[i + 1];
       i += 2;
-		} else if (argv[i][1] == 'n') {
+		} else if (argv[i][1] == 'f') {
+      if (i + 1 >= argc) {
+        error_usage();
+      }
+      prompt_path = argv[i + 1];
+      i += 2;
+    } else if (argv[i][1] == 'n') {
       if (i + 1 >= argc) {
         error_usage();
       }
@@ -59,9 +89,20 @@ int main(int argc, char* argv[]) {
 			error_usage();
 		}
 	}
-
-  if (prompt.size() == 0) {
+  int has_prompt = prompt.size() > 0 ? 1 : 0;
+  int has_prompt_path = prompt_path.size() > 0 ? 1 : 0;
+  if ((has_prompt + has_prompt_path) != 1) {
     error_usage();
+  } else if (has_prompt_path) {
+    std::ifstream file(prompt_path);
+    if (!file.is_open()) {
+      std::cerr << "Error: could not open file " << prompt_path << std::endl;
+      return 1;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    prompt = buffer.str();
   }
 
   YALMData model_data;
@@ -99,38 +140,71 @@ int main(int argc, char* argv[]) {
     ) << std::endl;
   }
 
-  uint64_t start_ms = get_timestamp_ms();
-  // Hydrate KV cache by forwarding model on all prompt tokens and discarding output.
-  // This also generates output logits for the last token.
-  for (size_t pos = 0; pos < encoding.size(); pos++) {
-    int token_id = encoding[pos];
-    forward(state, model, token_id, pos);
-  }
-  uint64_t end_hydrate_ms = get_timestamp_ms();
-  // For N steps:
-  // - Sample + decode output logits
-  // - Forward the model
-  for (int i = 0; i < num_steps || num_steps == -1; i++) {
-    int token_id = sampler.sample_argmax(state.logits());
-    std::string token_str = tokenizer.decode_one(encoding.back(), token_id);
-    std::cout << token_str << std::flush;
-    encoding.push_back(token_id);
-    if (token_id == tokenizer.eos_id || token_id == tokenizer.eot_id) {
-      break;
+  if (mode == "completion") {
+    uint64_t start_ms = get_timestamp_ms();
+    // Hydrate KV cache by forwarding model on all prompt tokens and discarding output.
+    // This also generates output logits for the last token.
+    for (size_t pos = 0; pos < encoding.size(); pos++) {
+      int token_id = encoding[pos];
+      forward(state, model, token_id, pos);
     }
-    forward(state, model, token_id, encoding.size() - 1);
+    uint64_t end_hydrate_ms = get_timestamp_ms();
+    // For N steps:
+    // - Sample + decode output logits
+    // - Forward the model
+    for (int i = 0; i < num_steps || num_steps == -1; i++) {
+      int token_id = sampler.sample_argmax(state);
+      std::string token_str = tokenizer.decode_one(encoding.back(), token_id);
+      std::cout << token_str << std::flush;
+      encoding.push_back(token_id);
+      if (token_id == tokenizer.eos_id || token_id == tokenizer.eot_id) {
+        break;
+      }
+      forward(state, model, token_id, encoding.size() - 1);
+    }
+    std::cout << "\n" << std::endl;
+    uint64_t end_ms = get_timestamp_ms();
+    uint64_t elapsed_ms = end_ms - start_ms;
+    std::cout << fmt::format(
+      "Generation stats: ({} tokens, throughput: {:.5}tok/s, latency: {:.5}s/tok, hydrate: {:.5}s, total: {:.5}s)\n",
+      encoding.size(),
+      encoding.size() / (elapsed_ms / 1000.0),
+      (elapsed_ms / 1000.0) / encoding.size(),
+      (end_hydrate_ms - start_ms) / 1000.0,
+      elapsed_ms / 1000.0
+    ) << std::endl;
+  } else {
+    double sum_logprob = 0.0;
+    double ss_logprob = 0.0;
+    // Generates output logits for all tokens in the prompt and sum log probs to
+    // compute perplexity.
+    uint64_t start_ms = get_timestamp_ms();
+    size_t N = encoding.size() - 1;
+    for (size_t pos = 0; pos + 1 < encoding.size(); pos++) {
+      std::cout << "\r Computing perplexity..." << pos + 1 << "/" << N << std::flush;
+      int token_id = encoding[pos];
+      forward(state, model, token_id, pos);
+      double logprob = std::log(sampler.sample_prob(encoding[pos + 1], state));
+      sum_logprob += logprob;
+      ss_logprob += logprob * logprob;
+    }
+    std::cout << std::endl;
+    uint64_t end_ms = get_timestamp_ms();
+    uint64_t elapsed_ms = end_ms - start_ms;
+    double perplexity = std::exp(-sum_logprob / N);
+    double perplexity_error = perplexity * std::sqrt(
+      (ss_logprob - sum_logprob * sum_logprob / N) / N / N
+    );
+    std::cout << fmt::format(
+      "Stats: ({} tokens, perplexity: {:.5} ± {:.5}, throughput: {:.5}tok/s, latency: {:.5}s/tok, total: {:.5}s)\n",
+      N,
+      perplexity,
+      perplexity_error,
+      N / (elapsed_ms / 1000.0),
+      (elapsed_ms / 1000.0) / N,
+      elapsed_ms / 1000.0
+    ) << std::endl;
   }
-  std::cout << "\n" << std::endl;
-  uint64_t end_ms = get_timestamp_ms();
-  uint64_t elapsed_ms = end_ms - start_ms;
-  std::cout << fmt::format(
-    "Generation stats: ({} tokens, throughput: {:.5}tok/s, latency: {:.5}s/tok, hydrate: {:.5}s, total: {:.5}s)\n",
-    encoding.size(),
-    encoding.size() / (elapsed_ms / 1000.0),
-    (elapsed_ms / 1000.0) / encoding.size(),
-    (end_hydrate_ms - start_ms) / 1000.0,
-    elapsed_ms / 1000.0
-  ) << std::endl;
 
   return 0;
 }

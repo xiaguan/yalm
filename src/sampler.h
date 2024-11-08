@@ -7,5 +7,10 @@ struct Sampler {
 
   Sampler(const Config& config);
 
-  int sample_argmax(const float* logits);
+  // Return the probability score corresponding to `logits[index]`.
+  // This is equivalent to taking the softmax of the logits and returning
+  // the value at index `index`.
+  float sample_prob(int index, const InferenceState& s);
+  // Return the index of the maximum value in `logits`.
+  int sample_argmax(const InferenceState& s);
 };
