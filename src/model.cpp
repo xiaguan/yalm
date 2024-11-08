@@ -185,11 +185,11 @@ Model::Model(YALMData& yalm) {
   rms_final_weight = static_cast<float*>(check_tensor(
     get_tensor(yalm, "model.norm.weight"), 
     DType::dt_f32, 
-    {config.dim, 1, 1, 1}
+    {config.dim, 0, 0, 0}
   ));
   wcls = check_tensor(
     get_tensor(yalm, "model.output.weight"), 
     config.weight_dtype, 
-    {config.dim, config.vocab_size, 1, 1}
+    {config.dim, config.vocab_size, 0, 0}
   );
 }
