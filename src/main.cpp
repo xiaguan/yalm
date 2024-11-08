@@ -91,7 +91,8 @@ int main(int argc, char* argv[]) {
     std::cout << tokenizer.encoding_to_debug_string(encoding) << std::endl;
     uint64_t encoding_ms = encode_end_ms - encode_start_ms;
     std::cout << fmt::format(
-      "Encoding stats: (throughput: {}tok/s, latency: {}s/tok, total: {}s)\n",
+      "Encoding stats: ({} tokens, throughput: {}tok/s, latency: {}s/tok, total: {}s)\n",
+      encoding.size(),
       encoding.size() / (encoding_ms / 1000.0),
       (encoding_ms / 1000.0) / encoding.size(),
       encoding_ms / 1000.0
@@ -112,18 +113,19 @@ int main(int argc, char* argv[]) {
   for (int i = 0; i < num_steps || num_steps == -1; i++) {
     int token_id = sampler.sample_argmax(state.logits());
     std::string token_str = tokenizer.decode_one(encoding.back(), token_id);
-    std::cout << token_str;
+    std::cout << token_str << std::flush;
     encoding.push_back(token_id);
     if (token_id == tokenizer.eos_id || token_id == tokenizer.eot_id) {
       break;
     }
     forward(state, model, token_id, encoding.size() - 1);
   }
-  std::cout << std::endl;
+  std::cout << "\n" << std::endl;
   uint64_t end_ms = get_timestamp_ms();
   uint64_t elapsed_ms = end_ms - start_ms;
   std::cout << fmt::format(
-    "Generation stats: (throughput: {}tok/s, latency: {}s/tok, hydrate: {}s, total: {}s)\n",
+    "Generation stats: ({} tokens, throughput: {}tok/s, latency: {}s/tok, hydrate: {}s, total: {}s)\n",
+    encoding.size(),
     encoding.size() / (elapsed_ms / 1000.0),
     (elapsed_ms / 1000.0) / encoding.size(),
     (end_hydrate_ms - start_ms) / 1000.0,
