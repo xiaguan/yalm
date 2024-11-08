@@ -137,7 +137,7 @@ struct Model {
   // final norm
 	float* rms_final_weight = nullptr; // (dim,)
 	// classifier weights for the logits, on the last layer
-	void* wcls = nullptr; // (dim, vocab_size)
+	void* wcls = nullptr; // (vocab_size, dim)
 
   Model(YALMData& yalm);
 };

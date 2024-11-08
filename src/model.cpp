@@ -190,6 +190,6 @@ Model::Model(YALMData& yalm) {
   wcls = check_tensor(
     get_tensor(yalm, "model.output.weight"), 
     config.weight_dtype, 
-    {config.dim, config.vocab_size, 0, 0}
+    {config.vocab_size, config.dim, 0, 0}
   );
 }
