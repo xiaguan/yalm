@@ -94,6 +94,9 @@ int main(int argc, char* argv[]) {
     std::string token_str = tokenizer.decode_one(encoding.back(), token_id);
     std::cout << token_str;
     encoding.push_back(token_id);
+    if (token_id == tokenizer.eos_id) {
+      break;
+    }
     forward(state, model, token_id, encoding.size() - 1);
   }
 
