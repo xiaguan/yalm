@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
     std::cout << tokenizer.encoding_to_debug_string(encoding) << std::endl;
     uint64_t encoding_ms = encode_end_ms - encode_start_ms;
     std::cout << fmt::format(
-      "Encoding stats: ({} tokens, throughput: {}tok/s, latency: {}s/tok, total: {}s)\n",
+      "Encoding stats: ({} tokens, throughput: {:.5}tok/s, latency: {:.5}s/tok, total: {:.5}s)\n",
       encoding.size(),
       encoding.size() / (encoding_ms / 1000.0),
       (encoding_ms / 1000.0) / encoding.size(),
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
   uint64_t end_ms = get_timestamp_ms();
   uint64_t elapsed_ms = end_ms - start_ms;
   std::cout << fmt::format(
-    "Generation stats: ({} tokens, throughput: {}tok/s, latency: {}s/tok, hydrate: {}s, total: {}s)\n",
+    "Generation stats: ({} tokens, throughput: {:.5}tok/s, latency: {:.5}s/tok, hydrate: {:.5}s, total: {:.5}s)\n",
     encoding.size(),
     encoding.size() / (elapsed_ms / 1000.0),
     (elapsed_ms / 1000.0) / encoding.size(),
