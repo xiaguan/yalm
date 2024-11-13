@@ -169,9 +169,13 @@ int main(int argc, char* argv[]) {
     uint64_t end_ms = get_timestamp_ms();
     double elapsed_s = (end_ms - start_ms) / 1000.0;
     std::cout << fmt::format(
-      "Generation stats: ({} tokens, throughput: {:.5}tok/s, "
-      "latency: {:.5}s/tok, hydrate: {:.5}s, bandwidth: {:.5}GB/s, "
-      "total: {:.5}s)\n",
+      "Generation stats:\n"
+      "  {} tokens\n"
+      "  throughput: {:.5}tok/s\n"
+      "  latency: {:.5}s/tok\n"
+      "  hydrate: {:.5}s\n"
+      "  bandwidth: {:.5}GB/s\n"
+      "  total: {:.5}s\n",
       encoding.size(),
       encoding.size() / elapsed_s,
       elapsed_s / encoding.size(),
@@ -206,8 +210,13 @@ int main(int argc, char* argv[]) {
       (ss_logprob - sum_logprob * sum_logprob / N) / N / N
     );
     std::cout << fmt::format(
-      "Stats: ({} tokens, perplexity: {:.5} ± {:.5}, throughput: {:.5}tok/s, "
-      "latency: {:.5}s/tok, bandwidth: {:.5}GB/s, total: {:.5}s)\n",
+      "Stats:\n"
+      "  {} tokens\n"
+      "  perplexity: {:.5} ± {:.5}\n"
+      "  throughput: {:.5}tok/s\n"
+      "  latency: {:.5}s/tok\n"
+      "  bandwidth: {:.5}GB/s\n"
+      "  total: {:.5}s\n",
       N,
       perplexity,
       perplexity_error,

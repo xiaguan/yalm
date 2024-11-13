@@ -58,18 +58,18 @@ int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr,
   } else if (dtype_str == "U8") {
     this->dtype = DType::dt_u8;
   } else {
-    std::cout << "bad dtype" << std::endl;
+    std::cerr << "bad dtype" << std::endl;
     return -1;
   }
   size_t dsize = dtype_size(this->dtype);
 
   size_t numel = 1;
   if (val.at("shape").size() > 4) {
-    std::cout << "shape exceeds 4 dimensions" << std::endl;
+    std::cerr << "shape exceeds 4 dimensions" << std::endl;
   }
   for (size_t i = 0; i < val.at("shape").size() && i < 4; i++) {
     if (val.at("shape")[i].get<int>() != val.at("shape")[i]) {
-      std::cout << "bad shape" << std::endl;
+      std::cerr << "bad shape" << std::endl;
       return -1;
     }
     shape[i] = val.at("shape")[i].get<int>();
@@ -81,14 +81,14 @@ int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr,
   size_t offset_start = static_cast<size_t>(val.at("data_offsets")[0]);
   size_t offset_end = static_cast<size_t>(val.at("data_offsets")[1]);
   if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
-    std::cout << "bad offsets" << std::endl;
+    std::cerr << "bad offsets" << std::endl;
     return -1;
   }
   this->data = (char*)bytes_ptr + offset_start;
   this->size = offset_end - offset_start;
   // validate the shape matches the size
   if (numel * dsize != this->size) {
-    std::cout << "bad size" << std::endl;
+    std::cerr << "bad size" << std::endl;
     return -1;
   }
   return 0;
@@ -144,7 +144,6 @@ int YALMData::from_file(const std::string& filename) {
     if (key == "__metadata__") {
       metadata = val;
     } else {
-      std::cout << "parsing tensor: " << key << std::endl;
       Tensor& tensor = tensors[key];
       if (tensor.from_json(key, val, bytes_ptr, bytes_size) != 0) {
         munmap(data, size);

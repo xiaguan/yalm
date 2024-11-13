@@ -37,7 +37,7 @@ void Config::from_yalm(YALMData& yalm, int context) {
   } else if (act_str == "silu") {
     act = ActivationType::SILU;
   } else {
-    std::cout << "unsupported act_type, defaulting to gelu" << std::endl;
+    std::cerr << "unsupported act_type, defaulting to gelu" << std::endl;
     act = ActivationType::GELU;
   }
 
@@ -45,7 +45,7 @@ void Config::from_yalm(YALMData& yalm, int context) {
   if (norm_type_str == "rmsnorm") {
     norm_type = LayerNormType::RMSNorm;
   } else {
-    std::cout << "unsupported norm_type, defaulting to rmsnorm" << std::endl;
+    std::cerr << "unsupported norm_type, defaulting to rmsnorm" << std::endl;
     norm_type = LayerNormType::RMSNorm;
   }
 
