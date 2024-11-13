@@ -52,19 +52,36 @@ void Config::from_yalm(YALMData& yalm, int context) {
 	qkv_clip = yalm.metadata.contains("qkv_clip") ? std::stof(yalm.metadata.at("qkv_clip").get<std::string>()) : FLT_MAX;
 
   std::string dtype = yalm.metadata.at("dtype").get<std::string>();
+  // TODO: support fp16
+  // TODO: support fp8
   if (dtype == "fp32") {
-    weight_dbits = 32;
     weight_dtype = DType::dt_f32;
-  } else if (dtype == "fp16") {
-    weight_dbits = 16;
-    weight_dtype = DType::dt_f16;
-  } else if (dtype == "fp8") {
-    weight_dbits = 8;
-    weight_dtype = DType::dt_f8e5m2;
   } else {
     std::cerr << "FATAL: unsupported dtype: " << dtype << std::endl;
     assert(false);
   }
+}
+
+size_t Config::active_bytes(size_t pos) const {
+  size_t weight_size = dtype_size(weight_dtype);
+
+  size_t bytes_per_block = 0;
+  bytes_per_block += 2 * dim * sizeof(float); // rms_att_weight, rms_ffn_weight
+  bytes_per_block += n_heads * head_dim * dim * weight_size; // wq
+  bytes_per_block += 2 * n_kv_heads * head_dim * dim * weight_size; // wk, wv
+  bytes_per_block += n_heads * head_dim * dim * weight_size; // wo
+  bytes_per_block += 3 * dim * hidden_dim * weight_size; // w1, w2, w3
+  size_t kv_len = std::min(static_cast<size_t>(max_seq_len), pos + 1);
+  size_t kv_entry_size = sizeof(float);
+  bytes_per_block += 2 * kv_len * n_kv_heads * head_dim * kv_entry_size; // key_cache, value_cache
+
+  size_t bytes = 0;
+  bytes += dim * weight_size; // 1 row of token_embedding_table
+  bytes += n_layers * bytes_per_block; // blocks
+  bytes += dim * sizeof(float); // rms_final_weight
+  bytes += vocab_size * dim * sizeof(float); // wcls
+
+  return bytes;
 }
 
 void* check_tensor(const Tensor* tensor, DType weight_dtype, std::array<int, 4> shape) {

@@ -21,13 +21,14 @@ enum class DType {
 	dt_u8,
 };
 std::string dtype_to_string(DType dtype);
+size_t dtype_size(DType dtype);
 
 struct Tensor {
   std::string name;
   DType dtype;
   std::array<int, 4> shape = {0, 0, 0, 0};
   void* data = nullptr;
-  size_t size;
+  size_t size; // size in bytes (number of elements * element size)
 
   // Returns 0 if successful, other if failed
   int from_json(const std::string& name, const json& j, void* bytes_ptr, size_t bytes_size);

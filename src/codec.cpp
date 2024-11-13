@@ -21,41 +21,47 @@ std::string dtype_to_string(DType dtype) {
   return "UNKNOWN";
 }
 
+size_t dtype_size(DType dtype) {
+  switch (dtype) {
+    case DType::dt_f32: return 4;
+    case DType::dt_f16: return 2;
+    case DType::dt_bf16: return 2;
+    case DType::dt_f8e5m2: return 1;
+    case DType::dt_f8e4m3: return 1;
+    case DType::dt_i32: return 4;
+    case DType::dt_i16: return 2;
+    case DType::dt_i8: return 1;
+    case DType::dt_u8: return 1;
+  }
+  return 0;
+}
+
 int Tensor::from_json(const std::string& name, const json& val, void* bytes_ptr, size_t bytes_size) {
   this->name = name;
-  size_t dsize = 0;
   std::string dtype_str = val.value("dtype", ""); 
   if (dtype_str == "F32") {
     this->dtype = DType::dt_f32;
-    dsize = 4;
   } else if (dtype_str == "F16") {
     this->dtype = DType::dt_f16;
-    dsize = 2;
   } else if (dtype_str == "BF16") {
     this->dtype = DType::dt_bf16;
-    dsize = 2;
   } else if (dtype_str == "F8_E5M2") {
     this->dtype = DType::dt_f8e5m2;
-    dsize = 1;
   } else if (dtype_str == "F8_E4M3") {
     this->dtype = DType::dt_f8e4m3;
-    dsize = 1;
   } else if (dtype_str == "I32") {
     this->dtype = DType::dt_i32;
-    dsize = 4;
   } else if (dtype_str == "I16") {
     this->dtype = DType::dt_i16;
-    dsize = 2;
   } else if (dtype_str == "I8") {
     this->dtype = DType::dt_i8;
-    dsize = 1;
   } else if (dtype_str == "U8") {
     this->dtype = DType::dt_u8;
-    dsize = 1;
   } else {
     std::cout << "bad dtype" << std::endl;
     return -1;
   }
+  size_t dsize = dtype_size(this->dtype);
 
   size_t numel = 1;
   if (val.at("shape").size() > 4) {

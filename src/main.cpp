@@ -142,11 +142,13 @@ int main(int argc, char* argv[]) {
 
   if (mode == "completion") {
     uint64_t start_ms = get_timestamp_ms();
+    size_t read_bytes = 0;
     // Hydrate KV cache by forwarding model on all prompt tokens and discarding output.
     // This also generates output logits for the last token.
     for (size_t pos = 0; pos < encoding.size(); pos++) {
       int token_id = encoding[pos];
       forward(state, model, token_id, pos);
+      read_bytes += model.config.active_bytes(pos);
     }
     uint64_t end_hydrate_ms = get_timestamp_ms();
     // For N steps:
@@ -161,17 +163,21 @@ int main(int argc, char* argv[]) {
         break;
       }
       forward(state, model, token_id, encoding.size() - 1);
+      read_bytes += model.config.active_bytes(encoding.size() - 1);
     }
     std::cout << "\n" << std::endl;
     uint64_t end_ms = get_timestamp_ms();
-    uint64_t elapsed_ms = end_ms - start_ms;
+    double elapsed_s = (end_ms - start_ms) / 1000.0;
     std::cout << fmt::format(
-      "Generation stats: ({} tokens, throughput: {:.5}tok/s, latency: {:.5}s/tok, hydrate: {:.5}s, total: {:.5}s)\n",
+      "Generation stats: ({} tokens, throughput: {:.5}tok/s, "
+      "latency: {:.5}s/tok, hydrate: {:.5}s, bandwidth: {:.5}GB/s, "
+      "total: {:.5}s)\n",
       encoding.size(),
-      encoding.size() / (elapsed_ms / 1000.0),
-      (elapsed_ms / 1000.0) / encoding.size(),
+      encoding.size() / elapsed_s,
+      elapsed_s / encoding.size(),
       (end_hydrate_ms - start_ms) / 1000.0,
-      elapsed_ms / 1000.0
+      ((double)read_bytes / 1e9) / elapsed_s,
+      elapsed_s
     ) << std::endl;
   } else {
     double sum_logprob = 0.0;
@@ -179,30 +185,36 @@ int main(int argc, char* argv[]) {
     // Generates output logits for all tokens in the prompt and sum log probs to
     // compute perplexity.
     uint64_t start_ms = get_timestamp_ms();
+    size_t read_bytes = 0;
     size_t N = encoding.size() - 1;
     for (size_t pos = 0; pos + 1 < encoding.size(); pos++) {
       std::cout << "\r Computing perplexity..." << pos + 1 << "/" << N << std::flush;
+      
       int token_id = encoding[pos];
       forward(state, model, token_id, pos);
+      read_bytes += model.config.active_bytes(pos);
+
       double logprob = std::log(sampler.sample_prob(encoding[pos + 1], state));
       sum_logprob += logprob;
       ss_logprob += logprob * logprob;
     }
     std::cout << std::endl;
     uint64_t end_ms = get_timestamp_ms();
-    uint64_t elapsed_ms = end_ms - start_ms;
+    double elapsed_s = (end_ms - start_ms)/1000.0;
     double perplexity = std::exp(-sum_logprob / N);
     double perplexity_error = perplexity * std::sqrt(
       (ss_logprob - sum_logprob * sum_logprob / N) / N / N
     );
     std::cout << fmt::format(
-      "Stats: ({} tokens, perplexity: {:.5} ± {:.5}, throughput: {:.5}tok/s, latency: {:.5}s/tok, total: {:.5}s)\n",
+      "Stats: ({} tokens, perplexity: {:.5} ± {:.5}, throughput: {:.5}tok/s, "
+      "latency: {:.5}s/tok, bandwidth: {:.5}GB/s, total: {:.5}s)\n",
       N,
       perplexity,
       perplexity_error,
-      N / (elapsed_ms / 1000.0),
-      (elapsed_ms / 1000.0) / N,
-      elapsed_ms / 1000.0
+      N / elapsed_s,
+      elapsed_s / N,
+      ((double)read_bytes / 1e9) / elapsed_s,
+      elapsed_s
     ) << std::endl;
   }
 

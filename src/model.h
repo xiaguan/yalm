@@ -30,16 +30,13 @@ struct Config {
   LayerNormType norm_type;  // norm type
   float qkv_clip;           // clip qkv values to [-clip, clip]
 
-  // Number of bits per weight, e.g. 8 bits for fp8.
-  // Determines type of void* used to store weights.
-  // We don't currently support sub-byte weights, but this can be used for e.g. 4-bit gf4 format later.
-  int weight_dbits;
   // Data type of the weights according to config, used
   // to safety check tensor dtype at initialization time.
   DType weight_dtype;
 
   // If nonzero `context` is supplied, max sequence length is limited to `context`.
   void from_yalm(YALMData& yalm, int context = 0);
+  size_t active_bytes(size_t pos) const;
 };
 
 struct Block {
