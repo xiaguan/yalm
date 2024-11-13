@@ -187,13 +187,15 @@ static void block(
   // Multihead attention. Iterate over all heads.
   int q_per_kv_head = c.n_heads / c.n_kv_heads; // query heads per kv head (for MultiQueryAttention/GroupedQueryAttention)
   int h;
-  for (h = 0; h < c.n_heads; ++h) {
+#pragma omp parallel for private(h)
+  for (h = 0; h < c.n_heads; h++) {
     int head_offset = h * c.head_dim;
+    int scratch_offset = h * c.max_seq_len;
     float* qh = s.q() + head_offset;
     int kv_head_offset = (h / q_per_kv_head) * c.head_dim;
     float* kh = kb + kv_head_offset;
     float* vh = vb + kv_head_offset;
-    attn(s.xb2() + head_offset, s.att(), qh, kh, vh, c.head_dim, c.n_kv_heads, kv_len);
+    attn(s.xb2() + head_offset, s.att() + scratch_offset, qh, kh, vh, c.head_dim, c.n_kv_heads, kv_len);
   }
 
   // final matmul to get output of the attention, using `hb` as temp storage
