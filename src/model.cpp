@@ -161,19 +161,38 @@ Block::Block(
   _value_cache.reset(new float[config.max_seq_len * config.n_kv_heads * config.head_dim]());
 }
 
-InferenceState::InferenceState(const Config& config) {
-  _head_dim = config.head_dim;
-  _max_seq_len = config.max_seq_len;
-  _x.reset(new float[config.dim]());
-  _xb.reset(new float[config.dim]());
-  _xb2.reset(new float[config.dim]());
-  _hb.reset(new float[config.hidden_dim]());
-  _hb2.reset(new float[config.hidden_dim]());
-  _q.reset(new float[config.n_heads * config.head_dim]());
-  _k.reset(new float[config.n_kv_heads * config.head_dim]());
-  _v.reset(new float[config.n_kv_heads * config.head_dim]());
-  _att.reset(new float[config.n_heads * config.max_seq_len]());
-  _logits.reset(new float[config.vocab_size]());
+InferenceState::InferenceState(const Config& config): 
+  InferenceState(
+    config.dim,
+    config.hidden_dim,
+    config.head_dim,
+    config.n_heads,
+    config.n_kv_heads,
+    config.vocab_size,
+    config.max_seq_len
+  ) {}
+
+InferenceState::InferenceState(
+  int dim,
+  int hidden_dim,
+  int head_dim,
+  int n_heads,
+  int n_kv_heads,
+  int vocab_size,
+  int max_seq_len
+) {
+  _head_dim = head_dim;
+  _max_seq_len = max_seq_len;
+  _x.reset(new float[dim]());
+  _xb.reset(new float[dim]());
+  _xb2.reset(new float[dim]());
+  _hb.reset(new float[hidden_dim]());
+  _hb2.reset(new float[hidden_dim]());
+  _q.reset(new float[n_heads * head_dim]());
+  _k.reset(new float[n_kv_heads * head_dim]());
+  _v.reset(new float[n_kv_heads * head_dim]());
+  _att.reset(new float[n_heads * max_seq_len]());
+  _logits.reset(new float[vocab_size]());
 }
 
 Model::Model(YALMData& yalm) {

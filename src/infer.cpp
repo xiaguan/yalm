@@ -99,7 +99,7 @@ static void rope(float* vec, int d, int head_dim, int pos, float theta, int rota
 }
 
 // Compute next value in a sequence for a single causal self-attention head.
-static void attn(
+void attn(
   float* xout,    // (dim,) - output vector
   float* atth,    // (kv_len,) - scratch space to hold attention scores of the sequence
   float* qh,      // (head_dim,) - query vector for this head

@@ -7,17 +7,24 @@ NVCC?=nvcc
 BUILD=build
 
 # compile .c, .cpp, .cu files
-SOURCES=$(wildcard src/*.c)
-SOURCES+=$(wildcard src/*.cc)
-SOURCES+=$(wildcard src/*.cpp)
-SOURCES+=$(wildcard src/*.cu)
+SOURCES=$(filter-out src/test.cpp,$(wildcard src/*.c))
+SOURCES+=$(filter-out src/test.cpp,$(wildcard src/*.cc))
+SOURCES+=$(filter-out src/test.cpp,$(wildcard src/*.cpp))
+SOURCES+=$(filter-out src/test.cpp,$(wildcard src/*.cu))
 SOURCES+=$(wildcard vendor/*.c)
 SOURCES+=$(wildcard vendor/*.cc)
 SOURCES+=$(wildcard vendor/*.cpp)
 SOURCES+=$(wildcard vendor/*.cu)
 
+# Define test sources separately
+TEST_SOURCES=src/test.cpp
+TEST_SOURCES+=$(filter-out src/main.cpp,$(SOURCES))
+
 OBJECTS=$(SOURCES:%=$(BUILD)/%.o)
+TEST_OBJECTS=$(TEST_SOURCES:%=$(BUILD)/%.o)
+
 BINARY=$(BUILD)/main
+TEST_BINARY=$(BUILD)/test
 
 CFLAGS=-g -Wall -Wpointer-arith -Werror -O3 -ffast-math -Ivendor -std=c++20
 LDFLAGS=-lm
@@ -41,10 +48,15 @@ endif
 
 all: $(BINARY)
 
+test: $(TEST_BINARY)
+
 format:
 	clang-format -i src/*
 
 $(BINARY): $(OBJECTS)
+	$(CXX) $^ $(LDFLAGS) -o $@
+
+$(TEST_BINARY): $(TEST_OBJECTS)
 	$(CXX) $^ $(LDFLAGS) -o $@
 
 $(BUILD)/%.c.o: %.c
@@ -64,8 +76,9 @@ $(BUILD)/%.cu.o: %.cu
 	$(NVCC) $< $(CUFLAGS) -c -MMD -MP -o $@
 
 -include $(OBJECTS:.o=.d)
+-include $(TEST_OBJECTS:.o=.d)
 
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all clean format
+.PHONY: all clean format test

@@ -93,6 +93,15 @@ private:
 // This lets us avoid allocations during inference.
 struct InferenceState {
   InferenceState(const Config& config);
+  InferenceState(
+    int dim,
+    int hidden_dim,
+    int head_dim,
+    int n_heads,
+    int n_kv_heads,
+    int vocab_size,
+    int max_seq_len
+  );
 
   // current activations
   float* x() const { return _x.get(); }
@@ -107,7 +116,6 @@ struct InferenceState {
   float* q(int head) const { return _q.get() + _head_dim * head; }
   float* k() const { return _k.get(); }
   float* v() const { return _v.get(); }
-  float* att() const { return _att.get(); }
   float* att(int head) const { return _att.get() + _max_seq_len * head; }
   // LM head
   float* logits() const { return _logits.get(); }
@@ -146,3 +154,13 @@ struct Model {
 };
 
 void forward(InferenceState& s, Model& m, int token, int pos);
+void attn(
+  float* xout,    // (dim,) - output vector
+  float* atth,    // (kv_len,) - scratch space to hold attention scores of the sequence
+  float* qh,      // (head_dim,) - query vector for this head
+  float* kh,      // (kv_len, n_kv_heads, head_dim) - buffer containing key vectors of the sequence for all KV heads
+  float* vh,      // (kv_len, n_kv_heads, head_dim) - buffer containing value vectors of the sequence for all KV heads
+  int head_dim,   // size of the "key-space"
+  int n_kv_heads, // number of kv heads, can be < n_heads (1 is MultiQueryAttention, >1 is GroupedQueryAttention)
+  int kv_len      // number of tokens of the sequence we will attend over
+);
