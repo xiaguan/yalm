@@ -97,18 +97,24 @@ struct InferenceState {
   // current activations
   float* x() const { return _x.get(); }
   float* xb() const { return _xb.get(); }
+  float* xb(int head) const { return _xb.get() + _head_dim * head; }
   // TODO: do we need xb2?
   float* xb2() const { return _xb2.get(); }
+  float* xb2(int head) const { return _xb2.get() + _head_dim * head; }
   float* hb() const { return _hb.get(); }
   float* hb2() const { return _hb2.get(); }
   float* q() const { return _q.get(); }
+  float* q(int head) const { return _q.get() + _head_dim * head; }
   float* k() const { return _k.get(); }
   float* v() const { return _v.get(); }
   float* att() const { return _att.get(); }
+  float* att(int head) const { return _att.get() + _max_seq_len * head; }
   // LM head
   float* logits() const { return _logits.get(); }
 
 private:
+  int _head_dim;
+  int _max_seq_len;
   // current activations
   std::unique_ptr<float[]> _x = nullptr;         // (dim,) - latest activation
   std::unique_ptr<float[]> _xb = nullptr;        // (dim,) - activation inside a residual branch

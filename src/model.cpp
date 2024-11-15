@@ -162,6 +162,8 @@ Block::Block(
 }
 
 InferenceState::InferenceState(const Config& config) {
+  _head_dim = config.head_dim;
+  _max_seq_len = config.max_seq_len;
   _x.reset(new float[config.dim]());
   _xb.reset(new float[config.dim]());
   _xb2.reset(new float[config.dim]());
