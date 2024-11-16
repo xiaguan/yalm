@@ -1,7 +1,11 @@
 #include <iostream>
+#include <memory>
+#include <omp.h>
+#include <random>
 #include <vector>
 
 #include "model.h"
+#include "time.h"
 
 bool floatEquals(float a, float b, float epsilon = 1e-5) {
   return std::abs(a - b) < epsilon;
@@ -105,8 +109,60 @@ void test_attn() {
   }, "xout");
 }
 
+// Helper function to allocate aligned memory
+float* allocateAlignedArray(size_t N) {
+  // Allocate aligned memory (64-byte alignment for AVX-512)
+  void* ptr = nullptr;
+  if (posix_memalign(&ptr, 64, N * sizeof(float)) != 0) {
+    throw std::bad_alloc();
+  }
+  return static_cast<float*>(ptr);
+}
+
+void mem_bench() {
+  constexpr size_t N_THREADS = 32;
+  constexpr size_t MB_PER_THREAD = 1024;
+  constexpr size_t ELS_PER_THREAD = (MB_PER_THREAD * 1024 * 1024) / sizeof(float);
+  constexpr size_t N = N_THREADS * ELS_PER_THREAD;
+
+  std::cout << "Using " << N_THREADS << " threads" << std::endl;
+  std::cout << "Allocating " << N_THREADS * MB_PER_THREAD << " MB (" << N << " floats)" << std::endl;
+  float* data = allocateAlignedArray(N);
+
+  std::cout << "Filling data..." << std::endl;
+#pragma omp parallel for num_threads(N_THREADS)
+  for (size_t i = 0; i < N_THREADS; i++) {
+    std::default_random_engine gen((unsigned long)i);
+    std::normal_distribution<float> dist(0.0, 1.0);
+    for (size_t j = 0; j < ELS_PER_THREAD; j++) {
+      data[i * ELS_PER_THREAD + j] = dist(gen);
+    }
+  }
+  std::cout << "Running memory bandwidth test..." << std::endl;
+
+  float totalSum = 0.0;
+  uint64_t start = get_timestamp_ms();
+#pragma omp parallel for simd reduction(+:totalSum) schedule(guided) aligned(data: 64) num_threads(N_THREADS)
+  for (size_t i = 0; i < N; i++) {
+    totalSum += data[i];
+  }
+    
+  uint64_t end = get_timestamp_ms();
+  float elapsed_s = (end - start) / 1000.0;
+  float mb_per_s = N_THREADS * MB_PER_THREAD / elapsed_s;
+
+  std::cout << "Total sum: " << totalSum << std::endl;
+  std::cout << "Elapsed time: " << elapsed_s << " s" << std::endl;
+  std::cout << "Memory bandwidth: " << mb_per_s << " MB/s" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
-  test_attn();
+  if (argc == 2 && std::string(argv[1]) == "-b") {
+    std::cout << "Running memory benchmark" << std::endl;
+    mem_bench();
+  } else {
+    test_attn();
+  }
   std::cout << "All tests passed" << std::endl;
   return 0;
 }
