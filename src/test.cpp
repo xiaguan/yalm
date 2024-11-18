@@ -2,6 +2,7 @@
 #include <memory>
 #include <omp.h>
 #include <random>
+#include <thread>
 #include <vector>
 
 #include "model.h"
@@ -156,10 +157,74 @@ void mem_bench() {
   std::cout << "Memory bandwidth: " << mb_per_s << " MB/s" << std::endl;
 }
 
+// 64 is the typical cache line size
+struct alignas(64) ThreadData {
+  volatile uint32_t sink;
+  char padding[60]; // Ensures 64-byte alignment/padding
+};
+
+void mem_bench2_thread(uint32_t* data, size_t start_idx, size_t elements_per_thread, ThreadData* thread_sink) {
+  for (size_t i = start_idx; i < start_idx + elements_per_thread; i++) {
+    // 32-bit load stored in volatile to prevent optimization
+    thread_sink->sink = data[i];
+  }
+}
+
+void mem_bench2() {
+  constexpr size_t N_THREADS = 64;
+  constexpr size_t MB_PER_THREAD = 2048;
+  constexpr size_t ELS_PER_THREAD = (MB_PER_THREAD * 1024 * 1024) / sizeof(uint32_t);
+  constexpr size_t N = N_THREADS * ELS_PER_THREAD;
+
+  std::cout << "Using " << N_THREADS << " threads" << std::endl;
+  std::cout << "Allocating " << N_THREADS * MB_PER_THREAD << " MB (" << N << " uint32_t)" << std::endl;
+  uint32_t* data = new uint32_t[N];
+
+  std::cout << "Filling data..." << std::endl;
+#pragma omp parallel for num_threads(N_THREADS)
+  for (size_t i = 0; i < N_THREADS; i++) {
+    for (size_t j = 0; j < ELS_PER_THREAD; j++) {
+      data[i * ELS_PER_THREAD + j] = i + j;
+    }
+  }
+  std::cout << "Running memory bandwidth test..." << std::endl;
+
+  // Allocate cache-line aligned sinks for each thread
+  std::vector<ThreadData> thread_sinks(N_THREADS);
+
+  uint64_t start = get_timestamp_ms();
+  std::vector<std::thread> threads;
+  
+  // Launch threads
+  for (size_t i = 0; i < N_THREADS; i++) {
+    threads.emplace_back(mem_bench2_thread, 
+      data,
+      i * ELS_PER_THREAD, 
+      ELS_PER_THREAD,
+      &thread_sinks[i]
+    );
+  }
+  
+  // Wait for all threads to complete
+  for (auto& thread : threads) {
+    thread.join();
+  }
+    
+  uint64_t end = get_timestamp_ms();
+  float elapsed_s = (end - start) / 1000.0;
+  float mb_per_s = N_THREADS * MB_PER_THREAD / elapsed_s;
+
+  std::cout << "Elapsed time: " << elapsed_s << " s" << std::endl;
+  std::cout << "Memory bandwidth: " << mb_per_s << " MB/s" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
   if (argc == 2 && std::string(argv[1]) == "-b") {
     std::cout << "Running memory benchmark" << std::endl;
     mem_bench();
+  } else if (argc == 2 && std::string(argv[1]) == "-b2") {
+    std::cout << "Running memory benchmark 2" << std::endl;
+    mem_bench2();
   } else {
     test_attn();
   }

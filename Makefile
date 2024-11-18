@@ -5,6 +5,7 @@ UNAME=$(shell uname)
 NVCC?=nvcc
 
 BUILD=build
+ASM_DIR=$(BUILD)/asm
 
 # compile .c, .cpp, .cu files
 SOURCES=$(filter-out src/test.cpp,$(wildcard src/*.c))
@@ -22,6 +23,8 @@ TEST_SOURCES+=$(filter-out src/main.cpp,$(SOURCES))
 
 OBJECTS=$(SOURCES:%=$(BUILD)/%.o)
 TEST_OBJECTS=$(TEST_SOURCES:%=$(BUILD)/%.o)
+ASM_FILES=$(patsubst %.cpp,$(ASM_DIR)/%.s,$(filter %.cpp,$(SOURCES)))
+TEST_ASM_FILES=$(patsubst %.cpp,$(ASM_DIR)/%.s,$(filter %.cpp,$(TEST_SOURCES)))
 
 BINARY=$(BUILD)/main
 TEST_BINARY=$(BUILD)/test
@@ -46,9 +49,14 @@ else
   CUFLAGS+=-arch=$(CUARCH)
 endif
 
-all: $(BINARY)
+all: $(BINARY) asm
 
-test: $(TEST_BINARY)
+test: $(TEST_BINARY) test-asm
+
+# Target to build just assembly files
+asm: $(ASM_FILES)
+
+test-asm: $(TEST_ASM_FILES)
 
 format:
 	clang-format -i src/*
@@ -58,6 +66,11 @@ $(BINARY): $(OBJECTS)
 
 $(TEST_BINARY): $(TEST_OBJECTS)
 	$(CXX) $^ $(LDFLAGS) -o $@
+
+# Rule to generate assembly for cpp files
+$(ASM_DIR)/%.s: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $< $(CFLAGS) -S -masm=intel -o $@
 
 $(BUILD)/%.c.o: %.c
 	@mkdir -p $(dir $@)
@@ -81,4 +94,4 @@ $(BUILD)/%.cu.o: %.cu
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all clean format test
+.PHONY: all clean format test asm test-asm
