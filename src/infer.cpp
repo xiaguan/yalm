@@ -4,6 +4,9 @@
 #include <cfloat>
 #include <math.h>
 
+#include "immintrin.h"
+#include "f16cintrin.h"
+
 static void matmul(float* xout, float* x, float* w, int n, int d) {
 	// W (d,n) @ x (n,) -> xout (d,)
 	int i;
@@ -15,6 +18,47 @@ static void matmul(float* xout, float* x, float* w, int n, int d) {
 		}
 		xout[i] = val;
 	}
+}
+
+// matmul supporting float16 weights via the F16C extension, which allows
+// conversion into float32 values before calculations.
+static void matmul(float* xout, float* x, f16_t* w, int n, int d) {
+#if defined(__AVX2__) && defined(__F16C__)
+	// W (d,n) @ x (n,) -> xout (d,)
+  assert(n % 16 == 0);
+	int i;
+#pragma omp parallel for private(i)
+	for (i = 0; i < d; i++) {
+    // Vectorized dot product of w[i][:] and x[:] where w is a packed float16 array.
+		__m256 sumlo = _mm256_setzero_ps();
+    __m256 sumhi = _mm256_setzero_ps();
+		for (int j = 0; j < n; j+=16) {
+      // Extract the next set of 16 float16 weights from `w` and store them
+      // to two separate float32 vectors of width 8 (`wveclo_ps`, `wvechi_ps`)
+      __m256i wvec = _mm256_loadu_si256((__m256i*)&w[i * n + j]);
+      __m128i wveclo = _mm256_extractf128_si256(wvec, 0);
+      __m128i wvechi = _mm256_extractf128_si256(wvec, 1);
+      __m256 wveclo_ps = _mm256_cvtph_ps(wveclo);
+      __m256 wvechi_ps = _mm256_cvtph_ps(wvechi);
+      // Extract the next two float32 vectors of width 8 `xveclo`, `xvechi` from `x`
+      __m256 xveclo = _mm256_loadu_ps(&x[j]);
+      __m256 xvechi = _mm256_loadu_ps(&x[j + 8]);
+      // Compute vectorized FMAs: sumlo += wveclo * xveclo, sumhi += wvechi * xvechi
+      sumlo = _mm256_fmadd_ps(wveclo_ps, xveclo, sumlo);
+      sumhi = _mm256_fmadd_ps(wvechi_ps, xvechi, sumhi);
+		}
+    // Horizontally reduce width-8 float32 vectors sumlo, sumhi to a scalar.
+    __m256 sum8 = _mm256_add_ps(sumlo, sumhi);              // sum8[0:8] = sumlo[0:8] + sumhi[0:8]
+    __m128 sum4 = _mm_add_ps(                               // sum4[0:4] = sum8[0:4] + sum8[4:8]
+      _mm256_extractf128_ps(sum8, 0), 
+      _mm256_extractf128_ps(sum8, 1)
+    );
+    __m128 sum1 = _mm_dp_ps(sum4, _mm_set1_ps(1.0f), 0xf1); // sum1[0] = dot(sum4, [1,1,1,1])
+		xout[i] = _mm_cvtss_f32(sum1);
+	}
+#else
+  assert(false && "float16 not supported on this platform");
+#endif
 }
 
 static void rmsnorm(float* o, float* x, float* weight, int size, float eps) {
@@ -133,23 +177,48 @@ void attn(
   }
 }
 
-// Compute forward pass for a single block and update the inference state accordingly.
-// PRECONDITIONS: 
-// - `s.x()` contains the input to the block. Output will also go here.
-// - The model weights are FP32.
-// - Block KV cache is hydrated.
-static void block(
+void Block::block(
   InferenceState& s,  // inference state
   const Config& c,    // model configuration
-  Block& b,           // block weights
   int pos,            // index of the current token in the sequence
   int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
   int kv_len          // number of tokens in the kv cache that we will attend over
-) {
+) const {
+  switch (_weight_dtype) {
+    case DType::dt_f32: {
+      _block<float>(s, c, pos, kv_pos, kv_len);
+      break;
+    }
+    case DType::dt_f16: {
+#if defined(__AVX2__) && defined(__F16C__)
+      _block<f16_t>(s, c, pos, kv_pos, kv_len);
+#else
+      assert(false && "float16 not supported on this platform");
+#endif
+      break;
+    }
+    default: {
+      assert(false && "unsupported weight dtype");
+    }
+  }
+}
+
+// Compute forward pass for a single block and update the inference state accordingly.
+// PRECONDITIONS: 
+// - `s.x()` contains the input to the block. Output will also go here.
+// - Block KV cache is hydrated.
+template <typename T>
+void Block::_block(
+  InferenceState& s,  // inference state
+  const Config& c,    // model configuration
+  int pos,            // index of the current token in the sequence
+  int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
+  int kv_len          // number of tokens in the kv cache that we will attend over
+) const {
   // attention pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm(s.xb(), s.x(), b.rms_att_weight(), c.dim, c.norm_eps);
+      rmsnorm(s.xb(), s.x(), rms_att_weight(), c.dim, c.norm_eps);
       break;
     }
   }
@@ -158,9 +227,9 @@ static void block(
   int kv_dim = c.n_kv_heads * c.head_dim;
 
   // qkv matmuls for this position
-  matmul(s.q(), s.xb(), (float*)b.wq(), c.dim, q_dim);
-  matmul(s.k(), s.xb(), (float*)b.wk(), c.dim, kv_dim);
-  matmul(s.v(), s.xb(), (float*)b.wv(), c.dim, kv_dim);
+  matmul(s.q(), s.xb(), wq<T>(), c.dim, q_dim);
+  matmul(s.k(), s.xb(), wk<T>(), c.dim, kv_dim);
+  matmul(s.v(), s.xb(), wv<T>(), c.dim, kv_dim);
 
   // some models require clipping qkv values
   for (int i = 0; i < q_dim; ++i) {
@@ -176,8 +245,8 @@ static void block(
   rope(s.k(), kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
   
   // key and value point to the kv cache
-  float* kb = b.key_cache();
-  float* vb = b.value_cache();
+  float* kb = key_cache();
+  float* vb = value_cache();
   // update kv cache
   for (int i = 0; i < kv_dim; ++i) {
     kb[kv_pos * kv_dim + i] = s.k()[i];
@@ -196,7 +265,7 @@ static void block(
   }
 
   // final matmul to get output of the attention, using `hb` as temp storage
-  matmul(s.hb(), s.xb2(), (float*)b.wo(), q_dim, c.dim);
+  matmul(s.hb(), s.xb2(), wo<T>(), q_dim, c.dim);
 
   // residual connection back into x
   for (int i = 0; i < c.dim; ++i) {
@@ -206,15 +275,15 @@ static void block(
   // ffn pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm(s.xb(), s.x(), b.rms_ffn_weight(), c.dim, c.norm_eps);
+      rmsnorm(s.xb(), s.x(), rms_ffn_weight(), c.dim, c.norm_eps);
       break;
     }
   }
 
   // mix self.w2(F.silu(self.w1(x)) * self.w3(x))
   // Note this is a feedforward with a GLU, not a simple MLP.
-  matmul(s.hb(), s.xb(), (float*)b.w1(), c.dim, c.hidden_dim);
-  matmul(s.hb2(), s.xb(), (float*)b.w3(), c.dim, c.hidden_dim);
+  matmul(s.hb(), s.xb(), w1<T>(), c.dim, c.hidden_dim);
+  matmul(s.hb2(), s.xb(), w3<T>(), c.dim, c.hidden_dim);
   switch (c.act) {
     case ActivationType::GELU: {
       for (int i = 0; i < c.hidden_dim; ++i) {
@@ -230,41 +299,74 @@ static void block(
     }
   }
 
-  matmul(s.xb2(), s.hb(), (float*)b.w2(), c.hidden_dim, c.dim);
+  matmul(s.xb2(), s.hb(), w2<T>(), c.hidden_dim, c.dim);
   // residual connection back into x
   for (int i = 0; i < c.dim; ++i) {
     s.x()[i] += s.xb2()[i];
   }
 }
 
-void forward(InferenceState& s, Model& m, int token, int pos) {
-  // TODO: support float16
-  assert(m.config.weight_dtype == DType::dt_f32);
-  const Config& c = m.config;
+void Model::copy_embedding(InferenceState& s, int token) {
+  switch (config.weight_dtype) {
+    case DType::dt_f32: {
+      float* emb = static_cast<float*>(token_embedding_table);
+      for (int i = 0; i < config.dim; ++i) {
+        s.x()[i] = emb[token * config.dim + i];
+      }
+      break;
+    }
+    case DType::dt_f16: {
+#if defined(__AVX2__) && defined(__F16C__)
+      f16_t* emb = static_cast<f16_t*>(token_embedding_table);
+      for (int i = 0; i < config.dim; i+=1) {
+        s.x()[i] = _cvtsh_ss(emb[token * config.dim + i]);
+      }
+#else
+      assert(false && "float16 not supported on this platform");
+#endif
+      break;
+    }
+    default: {
+      assert(false && "unsupported weight dtype");
+    }
+  }
+}
+
+void Model::forward(InferenceState& s, int token, int pos) {
+  const Config& c = config;
 
   // copy the token embedding into `x`
-  float* token_embedding_table = (float*)m.token_embedding_table;
-  for (int i = 0; i < c.dim; ++i) {
-    s.x()[i] = token_embedding_table[token * c.dim + i];
-  }
+  copy_embedding(s, token);
 
   // TODO: attention sinks
 	int kv_pos = pos % c.max_seq_len;
 	int kv_len = pos >= c.max_seq_len ? c.max_seq_len : pos + 1;
 
   // forward all layers in order
-  for (auto& b : m.blocks) {
-    block(s, c, b, pos, kv_pos, kv_len);
+  for (auto& b : blocks) {
+    b.block(s, c, pos, kv_pos, kv_len);
   }
 
   // final layer norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm(s.x(), s.x(), m.rms_final_weight, c.dim, c.norm_eps);
+      rmsnorm(s.x(), s.x(), rms_final_weight, c.dim, c.norm_eps);
       break;
     }
   }
 
   // classifier into logits
-  matmul(s.logits(), s.x(), (float*)m.wcls, c.dim, c.vocab_size);
+  switch (config.weight_dtype) {
+    case DType::dt_f32: {
+      matmul(s.logits(), s.x(), static_cast<float*>(wcls), c.dim, c.vocab_size);
+      break;
+    }
+    case DType::dt_f16: {
+      matmul(s.logits(), s.x(), static_cast<f16_t*>(wcls), c.dim, c.vocab_size);
+      break;
+    }
+    default: {
+      assert(false && "unsupported weight dtype");
+    }
+  }
 }

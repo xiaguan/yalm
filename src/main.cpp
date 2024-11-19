@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
   // On CPU, this ensures all tensors are loaded into memory via mmap.
   // On GPU, this ensures all tensors are loaded into device memory and 
   // kernels are compiled + instantiated.
-  forward(state, model, 0, 0);
+  model.forward(state, 0, 0);
 
   std::vector<int> encoding;
   {
@@ -147,7 +147,7 @@ int main(int argc, char* argv[]) {
     // This also generates output logits for the last token.
     for (size_t pos = 0; pos < encoding.size(); pos++) {
       int token_id = encoding[pos];
-      forward(state, model, token_id, pos);
+      model.forward(state, token_id, pos);
       read_bytes += model.config.active_bytes(pos);
     }
     uint64_t end_hydrate_ms = get_timestamp_ms();
@@ -162,7 +162,7 @@ int main(int argc, char* argv[]) {
       if (token_id == tokenizer.eos_id || token_id == tokenizer.eot_id) {
         break;
       }
-      forward(state, model, token_id, encoding.size() - 1);
+      model.forward(state, token_id, encoding.size() - 1);
       read_bytes += model.config.active_bytes(encoding.size() - 1);
     }
     std::cout << "\n" << std::endl;
@@ -195,7 +195,7 @@ int main(int argc, char* argv[]) {
       std::cout << "\r Computing perplexity..." << pos + 1 << "/" << N << std::flush;
       
       int token_id = encoding[pos];
-      forward(state, model, token_id, pos);
+      model.forward(state, token_id, pos);
       read_bytes += model.config.active_bytes(pos);
 
       double logprob = std::log(sampler.sample_prob(encoding[pos + 1], state));

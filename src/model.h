@@ -39,55 +39,6 @@ struct Config {
   size_t active_bytes(size_t pos) const;
 };
 
-struct Block {
-  /* Transformer Block */
-
-  Block(
-    const Config& config,
-    const Tensor* rms_att_weight,
-    const Tensor* rms_ffn_weight,
-    const Tensor* wq,
-    const Tensor* wk,
-    const Tensor* wv,
-    const Tensor* wo,
-    const Tensor* w1,
-    const Tensor* w2,
-    const Tensor* w3
-  );
-
-  float* rms_att_weight() const { return _rms_att_weight; }
-  float* rms_ffn_weight() const { return _rms_ffn_weight; }
-  void* wq() const { return _wq; }
-  void* wk() const { return _wk; }
-  void* wv() const { return _wv; }
-  void* wo() const { return _wo; }
-  void* w1() const { return _w1; }
-  void* w2() const { return _w2; }
-  void* w3() const { return _w3; }
-  float* key_cache() const { return _key_cache.get(); }
-  float* value_cache() const { return _value_cache.get(); }
-
-private:
-  // weights for norms
-	float* _rms_att_weight = nullptr; // (dim) rmsnorm weights
-	float* _rms_ffn_weight = nullptr; // (dim)
-
-  // weights for self-attention matmuls
-	void* _wq = nullptr; // (n_heads * head_dim, dim)
-	void* _wk = nullptr; // (n_kv_heads * head_dim, dim)
-	void* _wv = nullptr; // (n_kv_heads * head_dim, dim)
-	void* _wo = nullptr; // (dim, n_heads * head_dim)
-	
-  // weights for ffn
-	void* _w1 = nullptr; // (n_experts?, hidden_dim, dim)
-	void* _w2 = nullptr; // (n_experts?, dim, hidden_dim)
-	void* _w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
-
-  // kv cache
-	std::shared_ptr<float[]> _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
-	std::shared_ptr<float[]> _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
-};
-
 // Buffer for all state used during a forward pass.
 // Members are reused across subsequent blocks and passes.
 // This lets us avoid allocations during inference.
@@ -138,6 +89,84 @@ private:
   std::unique_ptr<float[]> _logits = nullptr;    // (vocab_size,) - final output logits
 };
 
+/* Transformer Block */
+struct Block {
+  Block(
+    const Config& config,
+    const Tensor* rms_att_weight,
+    const Tensor* rms_ffn_weight,
+    const Tensor* wq,
+    const Tensor* wk,
+    const Tensor* wv,
+    const Tensor* wo,
+    const Tensor* w1,
+    const Tensor* w2,
+    const Tensor* w3
+  );
+
+  float* rms_att_weight() const { return _rms_att_weight; }
+  float* rms_ffn_weight() const { return _rms_ffn_weight; }
+  template <typename T>
+  T* wq() const { return static_cast<T*>(_wq); }
+  template <typename T>
+  T* wk() const { return static_cast<T*>(_wk); }
+  template <typename T>
+  T* wv() const { return static_cast<T*>(_wv); }
+  template <typename T>
+  T* wo() const { return static_cast<T*>(_wo); }
+  template <typename T>
+  T* w1() const { return static_cast<T*>(_w1); }
+  template <typename T>
+  T* w2() const { return static_cast<T*>(_w2); }
+  template <typename T>
+  T* w3() const { return static_cast<T*>(_w3); }
+  float* key_cache() const { return _key_cache.get(); }
+  float* value_cache() const { return _value_cache.get(); }
+
+  // Compute forward pass for this block and update the inference state accordingly.
+  // PRECONDITIONS: 
+  // - `s.x()` contains the input to the block. Output will also go here.
+  // - Block KV cache is hydrated.
+  void block(
+    InferenceState& s,  // inference state
+    const Config& c,    // model configuration
+    int pos,            // index of the current token in the sequence
+    int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
+    int kv_len          // number of tokens in the kv cache that we will attend over
+  ) const;
+
+private:
+  template <typename T>
+  void _block(
+    InferenceState& s,  // inference state
+    const Config& c,    // model configuration
+    int pos,            // index of the current token in the sequence
+    int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
+    int kv_len          // number of tokens in the kv cache that we will attend over
+  ) const;
+
+  DType _weight_dtype;
+
+  // weights for norms
+	float* _rms_att_weight = nullptr; // (dim) rmsnorm weights
+	float* _rms_ffn_weight = nullptr; // (dim)
+
+  // weights for self-attention matmuls
+	void* _wq = nullptr; // (n_heads * head_dim, dim)
+	void* _wk = nullptr; // (n_kv_heads * head_dim, dim)
+	void* _wv = nullptr; // (n_kv_heads * head_dim, dim)
+	void* _wo = nullptr; // (dim, n_heads * head_dim)
+	
+  // weights for ffn
+	void* _w1 = nullptr; // (n_experts?, hidden_dim, dim)
+	void* _w2 = nullptr; // (n_experts?, dim, hidden_dim)
+	void* _w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
+
+  // kv cache
+	std::shared_ptr<float[]> _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
+	std::shared_ptr<float[]> _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
+};
+
 struct Model {
   Config config;
 
@@ -151,9 +180,11 @@ struct Model {
 	void* wcls = nullptr; // (vocab_size, dim)
 
   Model(YALMData& yalm);
+  void forward(InferenceState& s, int token, int pos);
+private:
+  void copy_embedding(InferenceState& s, int token);
 };
 
-void forward(InferenceState& s, Model& m, int token, int pos);
 void attn(
   float* xout,    // (dim,) - output vector
   float* atth,    // (kv_len,) - scratch space to hold attention scores of the sequence

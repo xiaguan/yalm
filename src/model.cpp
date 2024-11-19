@@ -52,10 +52,11 @@ void Config::from_yalm(YALMData& yalm, int context) {
 	qkv_clip = yalm.metadata.contains("qkv_clip") ? std::stof(yalm.metadata.at("qkv_clip").get<std::string>()) : FLT_MAX;
 
   std::string dtype = yalm.metadata.at("dtype").get<std::string>();
-  // TODO: support fp16
   // TODO: support fp8
   if (dtype == "fp32") {
     weight_dtype = DType::dt_f32;
+  } else if (dtype == "fp16") {
+    weight_dtype = DType::dt_f16;
   } else {
     std::cerr << "FATAL: unsupported dtype: " << dtype << std::endl;
     assert(false);
@@ -126,6 +127,18 @@ Block::Block(
   const Tensor* w2,
   const Tensor* w3
 ) {
+  _weight_dtype = config.weight_dtype;
+  switch (config.weight_dtype) {
+    case DType::dt_f32:
+    case DType::dt_f16: {
+      break;
+    }
+    default: {
+      std::cerr << "FATAL: unsupported weight dtype " << dtype_to_string(_weight_dtype) << std::endl;
+      assert(false);
+      break;
+    }
+  }
 
   _rms_att_weight = static_cast<float*>(check_tensor(
     rms_att_weight, DType::dt_f32, {config.dim, 0, 0, 0}

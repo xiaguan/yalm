@@ -3,10 +3,13 @@
 #include "json.hpp"
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
 using json = nlohmann::json;
+
+typedef uint16_t f16_t;
 
 // TODO: Should this be narrowed down to what we actually support for model weight representation?
 enum class DType {
