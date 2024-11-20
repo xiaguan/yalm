@@ -332,7 +332,7 @@ void Model::copy_embedding(InferenceState& s, int token) {
   }
 }
 
-void Model::forward(InferenceState& s, int token, int pos) {
+void Model::forward(InferenceState& s, int token, int pos, InferenceMode mode) {
   const Config& c = config;
 
   // copy the token embedding into `x`
@@ -345,6 +345,11 @@ void Model::forward(InferenceState& s, int token, int pos) {
   // forward all layers in order
   for (auto& b : blocks) {
     b.block(s, c, pos, kv_pos, kv_len);
+  }
+
+  if (mode == InferenceMode::HYDRATE_KV_CACHE) {
+    // only hydrate the KV cache and don't compute output logits
+    return;
   }
 
   // final layer norm

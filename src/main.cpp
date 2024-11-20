@@ -147,7 +147,9 @@ int main(int argc, char* argv[]) {
     // This also generates output logits for the last token.
     for (size_t pos = 0; pos < encoding.size(); pos++) {
       int token_id = encoding[pos];
-      model.forward(state, token_id, pos);
+      InferenceMode inferMode = pos + 1 == encoding.size() ? 
+        InferenceMode::OUTPUT_LOGITS : InferenceMode::HYDRATE_KV_CACHE;
+      model.forward(state, token_id, pos, inferMode);
       read_bytes += model.config.active_bytes(pos);
     }
     uint64_t end_hydrate_ms = get_timestamp_ms();

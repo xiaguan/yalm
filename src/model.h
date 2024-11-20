@@ -167,6 +167,11 @@ private:
 	std::shared_ptr<float[]> _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
 };
 
+enum class InferenceMode {
+  HYDRATE_KV_CACHE, // only hydrate the KV cache and don't compute output logits
+  OUTPUT_LOGITS // set InferenceState logits to logits for the next token
+};
+
 struct Model {
   Config config;
 
@@ -180,7 +185,7 @@ struct Model {
 	void* wcls = nullptr; // (vocab_size, dim)
 
   Model(YALMData& yalm);
-  void forward(InferenceState& s, int token, int pos);
+  void forward(InferenceState& s, int token, int pos, InferenceMode mode = InferenceMode::OUTPUT_LOGITS);
 private:
   void copy_embedding(InferenceState& s, int token);
 };
