@@ -2,10 +2,12 @@
 
 #include "model.h"
 
+#include <memory>
+
 struct Sampler {
   int vocab_size;
 
-  Sampler(const Config& config);
+  Sampler(const std::shared_ptr<Config> config);
 
   // Return the probability score corresponding to `logits[index]`.
   // This is equivalent to taking the softmax of the logits and returning

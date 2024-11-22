@@ -55,15 +55,15 @@ void test_attn() {
   constexpr int TEST_HEAD_DIM = 3;
   constexpr int TEST_N_HEADS = 2;
   constexpr int TEST_N_KV_HEADS = 1;
-  InferenceState s(
-    TEST_DIM,
-    TEST_DIM,
-    TEST_HEAD_DIM,
-    TEST_N_HEADS,
-    TEST_N_KV_HEADS,
-    1,
-    TEST_SEQ_LEN
-  );
+  std::shared_ptr<Config> config = std::make_shared<Config>();
+  config->dim = TEST_DIM;
+  config->hidden_dim = TEST_DIM;
+  config->head_dim = TEST_HEAD_DIM;
+  config->n_heads = TEST_N_HEADS;
+  config->n_kv_heads = TEST_N_KV_HEADS;
+  config->vocab_size = 1;
+  config->max_seq_len = TEST_SEQ_LEN;
+  InferenceState s(config);
   // (n_heads, head_dim) - query vectors
   std::vector<float> q{
     0., 1e4, 0., // h=0

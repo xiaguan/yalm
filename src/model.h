@@ -14,6 +14,16 @@ enum class LayerNormType {
   RMSNorm,
 };
 
+enum class Device {
+  CPU,
+  CUDA,
+};
+
+extern "C" void* upload_cuda(void* host, size_t size);
+extern "C" void register_cuda_host(void* host, size_t size);
+extern "C" void free_cuda(void* device);
+extern "C" void unregister_cuda_host(void* host);
+
 struct Config {
   int dim;                  // transformer input & output dimension
   int hidden_dim;           // dimension of hidden layer in feedforward network
@@ -43,56 +53,54 @@ struct Config {
 // Members are reused across subsequent blocks and passes.
 // This lets us avoid allocations during inference.
 struct InferenceState {
-  InferenceState(const Config& config);
-  InferenceState(
-    int dim,
-    int hidden_dim,
-    int head_dim,
-    int n_heads,
-    int n_kv_heads,
-    int vocab_size,
-    int max_seq_len
-  );
+  InferenceState(const std::shared_ptr<Config> config);
+  ~InferenceState();
 
   // current activations
-  float* x() const { return _x.get(); }
-  float* xb() const { return _xb.get(); }
-  float* xb(int head) const { return _xb.get() + _head_dim * head; }
+  float* x() const { return _x; }
+  float* xb() const { return _xb; }
+  float* xb(int head) const { return _xb + _config->head_dim * head; }
   // TODO: do we need xb2?
-  float* xb2() const { return _xb2.get(); }
-  float* xb2(int head) const { return _xb2.get() + _head_dim * head; }
-  float* hb() const { return _hb.get(); }
-  float* hb2() const { return _hb2.get(); }
-  float* q() const { return _q.get(); }
-  float* q(int head) const { return _q.get() + _head_dim * head; }
-  float* k() const { return _k.get(); }
-  float* v() const { return _v.get(); }
-  float* att(int head) const { return _att.get() + _max_seq_len * head; }
+  float* xb2() const { return _xb2; }
+  float* xb2(int head) const { return _xb2 + _config->head_dim * head; }
+  float* hb() const { return _hb; }
+  float* hb2() const { return _hb2; }
+  float* q() const { return _q; }
+  float* q(int head) const { return _q + _config->head_dim * head; }
+  float* k() const { return _k; }
+  float* v() const { return _v; }
+  float* att(int head) const { return _att + _config->max_seq_len * head; }
   // LM head
-  float* logits() const { return _logits.get(); }
+  float* logits() const { return _logits; }
+
+  void cuda();
 
 private:
-  int _head_dim;
-  int _max_seq_len;
+  std::shared_ptr<Config> _config;
+  Device _device = Device::CPU;
+
   // current activations
-  std::unique_ptr<float[]> _x = nullptr;         // (dim,) - latest activation
-  std::unique_ptr<float[]> _xb = nullptr;        // (dim,) - activation inside a residual branch
+  float* _x = nullptr;         // (dim,) - latest activation
+  float* _xb = nullptr;        // (dim,) - activation inside a residual branch
   // TODO: do we need xb2?
-  std::unique_ptr<float[]> _xb2 = nullptr;       // (dim,) - activation inside a residual branch (second slot)
-  std::unique_ptr<float[]> _hb = nullptr;        // (hidden_dim,) - buffer for hidden dimension in feedforward network
-  std::unique_ptr<float[]> _hb2 = nullptr;       // (hidden_dim,) - buffer for hidden dimension in feedforward network (second slot)
-  std::unique_ptr<float[]> _q = nullptr;         // (n_heads * head_dim,) - query vectors for latest timestamp
-  std::unique_ptr<float[]> _k = nullptr;         // (n_kv_heads * head_dim,) - key vectors for latest timestamp
-  std::unique_ptr<float[]> _v = nullptr;         // (n_kv_heads * head_dim,) - value vectors for latest timestamp
-  std::unique_ptr<float[]> _att = nullptr;       // (n_heads, seq_len) - buffer for attention scores
+  float* _xb2 = nullptr;       // (dim,) - activation inside a residual branch (second slot)
+  float* _hb = nullptr;        // (hidden_dim,) - buffer for hidden dimension in feedforward network
+  float* _hb2 = nullptr;       // (hidden_dim,) - buffer for hidden dimension in feedforward network (second slot)
+  float* _q = nullptr;         // (n_heads * head_dim,) - query vectors for latest timestamp
+  float* _k = nullptr;         // (n_kv_heads * head_dim,) - key vectors for latest timestamp
+  float* _v = nullptr;         // (n_kv_heads * head_dim,) - value vectors for latest timestamp
+  float* _att = nullptr;       // (n_heads, seq_len) - buffer for attention scores
+  
   // LM head
-  std::unique_ptr<float[]> _logits = nullptr;    // (vocab_size,) - final output logits
+  // NOTE: this always lives on the host (CPU), but must be registered 
+  // with CUDA to be used on the device.
+  float* _logits = nullptr;    // (vocab_size,) - final output logits
 };
 
 /* Transformer Block */
 struct Block {
   Block(
-    const Config& config,
+    const std::shared_ptr<Config> config,
     const Tensor* rms_att_weight,
     const Tensor* rms_ffn_weight,
     const Tensor* wq,
@@ -103,6 +111,7 @@ struct Block {
     const Tensor* w2,
     const Tensor* w3
   );
+  ~Block();
 
   float* rms_att_weight() const { return _rms_att_weight; }
   float* rms_ffn_weight() const { return _rms_ffn_weight; }
@@ -120,8 +129,8 @@ struct Block {
   T* w2() const { return static_cast<T*>(_w2); }
   template <typename T>
   T* w3() const { return static_cast<T*>(_w3); }
-  float* key_cache() const { return _key_cache.get(); }
-  float* value_cache() const { return _value_cache.get(); }
+  float* key_cache() const { return _key_cache; }
+  float* value_cache() const { return _value_cache; }
 
   // Compute forward pass for this block and update the inference state accordingly.
   // PRECONDITIONS: 
@@ -129,23 +138,24 @@ struct Block {
   // - Block KV cache is hydrated.
   void block(
     InferenceState& s,  // inference state
-    const Config& c,    // model configuration
     int pos,            // index of the current token in the sequence
     int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
+
+  void cuda();
 
 private:
   template <typename T>
-  void _block(
+  void _block_cpu(
     InferenceState& s,  // inference state
-    const Config& c,    // model configuration
     int pos,            // index of the current token in the sequence
     int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
 
-  DType _weight_dtype;
+  std::shared_ptr<Config> _config;
+  Device _device = Device::CPU;
 
   // weights for norms
 	float* _rms_att_weight = nullptr; // (dim) rmsnorm weights
@@ -163,8 +173,8 @@ private:
 	void* _w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
 
   // kv cache
-	std::shared_ptr<float[]> _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
-	std::shared_ptr<float[]> _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
+	float* _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
+	float* _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
 };
 
 enum class InferenceMode {
@@ -173,9 +183,9 @@ enum class InferenceMode {
 };
 
 struct Model {
-  Config config;
+  std::shared_ptr<Config> config;
 
-  std::vector<Block> blocks;
+  std::vector<std::shared_ptr<Block>> blocks;
   
   // token embedding table
 	void* token_embedding_table = nullptr; // (vocab_size, dim)
@@ -185,9 +195,15 @@ struct Model {
 	void* wcls = nullptr; // (vocab_size, dim)
 
   Model(YALMData& yalm);
+  
   void forward(InferenceState& s, int token, int pos, InferenceMode mode = InferenceMode::OUTPUT_LOGITS);
+  void cuda();
+
 private:
-  void copy_embedding(InferenceState& s, int token);
+  void _forward_cpu(InferenceState& s, int token, int pos, InferenceMode mode = InferenceMode::OUTPUT_LOGITS);
+  void _copy_embedding(InferenceState& s, int token);
+
+  Device _device = Device::CPU;
 };
 
 void attn(

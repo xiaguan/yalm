@@ -177,44 +177,20 @@ void attn(
   }
 }
 
-void Block::block(
-  InferenceState& s,  // inference state
-  const Config& c,    // model configuration
-  int pos,            // index of the current token in the sequence
-  int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
-  int kv_len          // number of tokens in the kv cache that we will attend over
-) const {
-  switch (_weight_dtype) {
-    case DType::dt_f32: {
-      _block<float>(s, c, pos, kv_pos, kv_len);
-      break;
-    }
-    case DType::dt_f16: {
-#if defined(__AVX2__) && defined(__F16C__)
-      _block<f16_t>(s, c, pos, kv_pos, kv_len);
-#else
-      assert(false && "float16 not supported on this platform");
-#endif
-      break;
-    }
-    default: {
-      assert(false && "unsupported weight dtype");
-    }
-  }
-}
-
 // Compute forward pass for a single block and update the inference state accordingly.
 // PRECONDITIONS: 
 // - `s.x()` contains the input to the block. Output will also go here.
 // - Block KV cache is hydrated.
 template <typename T>
-void Block::_block(
+void Block::_block_cpu(
   InferenceState& s,  // inference state
-  const Config& c,    // model configuration
   int pos,            // index of the current token in the sequence
   int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
   int kv_len          // number of tokens in the kv cache that we will attend over
 ) const {
+  assert(_config);
+  const Config& c = *_config;
+
   // attention pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
@@ -306,20 +282,24 @@ void Block::_block(
   }
 }
 
-void Model::copy_embedding(InferenceState& s, int token) {
-  switch (config.weight_dtype) {
+template void Block::_block_cpu<float>(InferenceState&, int, int, int) const;
+template void Block::_block_cpu<f16_t>(InferenceState&, int, int, int) const;
+
+void Model::_copy_embedding(InferenceState& s, int token) {
+  const Config& c = *config;
+  switch (c.weight_dtype) {
     case DType::dt_f32: {
       float* emb = static_cast<float*>(token_embedding_table);
-      for (int i = 0; i < config.dim; ++i) {
-        s.x()[i] = emb[token * config.dim + i];
+      for (int i = 0; i < c.dim; ++i) {
+        s.x()[i] = emb[token * c.dim + i];
       }
       break;
     }
     case DType::dt_f16: {
 #if defined(__AVX2__) && defined(__F16C__)
       f16_t* emb = static_cast<f16_t*>(token_embedding_table);
-      for (int i = 0; i < config.dim; i+=1) {
-        s.x()[i] = _cvtsh_ss(emb[token * config.dim + i]);
+      for (int i = 0; i < c.dim; i+=1) {
+        s.x()[i] = _cvtsh_ss(emb[token * c.dim + i]);
       }
 #else
       assert(false && "float16 not supported on this platform");
@@ -332,19 +312,19 @@ void Model::copy_embedding(InferenceState& s, int token) {
   }
 }
 
-void Model::forward(InferenceState& s, int token, int pos, InferenceMode mode) {
-  const Config& c = config;
+void Model::_forward_cpu(InferenceState& s, int token, int pos, InferenceMode mode) {
+  const Config& c = *config;
 
   // copy the token embedding into `x`
-  copy_embedding(s, token);
+  _copy_embedding(s, token);
 
   // TODO: attention sinks
 	int kv_pos = pos % c.max_seq_len;
 	int kv_len = pos >= c.max_seq_len ? c.max_seq_len : pos + 1;
 
   // forward all layers in order
-  for (auto& b : blocks) {
-    b.block(s, c, pos, kv_pos, kv_len);
+  for (auto b : blocks) {
+    b->block(s, pos, kv_pos, kv_len);
   }
 
   if (mode == InferenceMode::HYDRATE_KV_CACHE) {
@@ -361,7 +341,7 @@ void Model::forward(InferenceState& s, int token, int pos, InferenceMode mode) {
   }
 
   // classifier into logits
-  switch (config.weight_dtype) {
+  switch (c.weight_dtype) {
     case DType::dt_f32: {
       matmul(s.logits(), s.x(), static_cast<float*>(wcls), c.dim, c.vocab_size);
       break;

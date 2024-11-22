@@ -2,8 +2,8 @@
 
 #include <cfloat>
 
-Sampler::Sampler(const Config& config) {
-  vocab_size = config.vocab_size;
+Sampler::Sampler(const std::shared_ptr<Config> config) {
+  vocab_size = config->vocab_size;
 }
 
 float Sampler::sample_prob(int index, const InferenceState& s) {
