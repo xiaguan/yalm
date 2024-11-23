@@ -217,27 +217,27 @@ void Block::block(
   int kv_len          // number of tokens in the kv cache that we will attend over
 ) const {
   if (_device == Device::CUDA) {
-    assert(false && "CUDA not supported for block");
-    return;
+    _block_cuda(s, pos, kv_pos, kv_len);
+  } else {
+    switch (_config->weight_dtype) {
+      case DType::F32: {
+        _block_cpu<float>(s, pos, kv_pos, kv_len);
+        break;
+      }
+      case DType::F16: {
+#if defined(__AVX2__) && defined(__F16C__)
+        _block_cpu<f16_t>(s, pos, kv_pos, kv_len);
+#else
+        assert(false && "float16 not supported on this platform");
+#endif
+        break;
+      }
+      default: {
+        assert(false && "unsupported weight dtype");
+      }
+    }
   }
 
-  switch (_config->weight_dtype) {
-    case DType::F32: {
-      _block_cpu<float>(s, pos, kv_pos, kv_len);
-      break;
-    }
-    case DType::F16: {
-#if defined(__AVX2__) && defined(__F16C__)
-      _block_cpu<f16_t>(s, pos, kv_pos, kv_len);
-#else
-      assert(false && "float16 not supported on this platform");
-#endif
-      break;
-    }
-    default: {
-      assert(false && "unsupported weight dtype");
-    }
-  }
 }
 
 InferenceState::InferenceState(const std::shared_ptr<Config> config): 
@@ -342,6 +342,8 @@ void Model::cuda() {
     return;
   }
   _device = Device::CUDA;
+  // TODO: support multiple CUDA devices
+  set_cuda_device(0);
   size_t weight_size = dtype_size(config->weight_dtype);
   token_embedding_table = upload_cuda(token_embedding_table, config->vocab_size * config->dim * weight_size);
   for (auto& block : blocks) {
@@ -353,9 +355,8 @@ void Model::cuda() {
 
 void Model::forward(InferenceState& s, int token, int pos, InferenceMode mode) {
   if (_device == Device::CUDA) {
-    assert(false && "CUDA not supported for forward");
-    return;
+    _forward_cuda(s, token, pos, mode);
+  } else {
+    _forward_cpu(s, token, pos, mode);
   }
-
-  _forward_cpu(s, token, pos, mode);
 }

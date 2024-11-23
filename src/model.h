@@ -23,6 +23,7 @@ extern "C" void* upload_cuda(void* host, size_t size);
 extern "C" void register_cuda_host(void* host, size_t size);
 extern "C" void free_cuda(void* device);
 extern "C" void unregister_cuda_host(void* host);
+extern "C" void set_cuda_device(int device);
 
 struct Config {
   int dim;                  // transformer input & output dimension
@@ -69,6 +70,7 @@ struct InferenceState {
   float* q(int head) const { return _q + _config->head_dim * head; }
   float* k() const { return _k; }
   float* v() const { return _v; }
+  float* att() const { return _att; }
   float* att(int head) const { return _att + _config->max_seq_len * head; }
   // LM head
   float* logits() const { return _logits; }
@@ -153,6 +155,12 @@ private:
     int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
+  void _block_cuda(
+    InferenceState& s,  // inference state
+    int pos,            // index of the current token in the sequence
+    int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
+    int kv_len          // number of tokens in the kv cache that we will attend over
+  ) const;
 
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
@@ -200,7 +208,8 @@ struct Model {
   void cuda();
 
 private:
-  void _forward_cpu(InferenceState& s, int token, int pos, InferenceMode mode = InferenceMode::OUTPUT_LOGITS);
+  void _forward_cpu(InferenceState& s, int token, int pos, InferenceMode mode);
+  void _forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode);
   void _copy_embedding(InferenceState& s, int token);
 
   Device _device = Device::CPU;
