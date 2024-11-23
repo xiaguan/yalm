@@ -54,9 +54,9 @@ void Config::from_yalm(YALMData& yalm, int context) {
   std::string dtype = yalm.metadata.at("dtype").get<std::string>();
   // TODO: support fp8
   if (dtype == "fp32") {
-    weight_dtype = DType::dt_f32;
+    weight_dtype = DType::F32;
   } else if (dtype == "fp16") {
-    weight_dtype = DType::dt_f16;
+    weight_dtype = DType::F16;
   } else {
     std::cerr << "FATAL: unsupported dtype: " << dtype << std::endl;
     assert(false);
@@ -129,8 +129,8 @@ Block::Block(
 ) {
   _config = config;
   switch (config->weight_dtype) {
-    case DType::dt_f32:
-    case DType::dt_f16: {
+    case DType::F32:
+    case DType::F16: {
       break;
     }
     default: {
@@ -141,10 +141,10 @@ Block::Block(
   }
 
   _rms_att_weight = static_cast<float*>(check_tensor(
-    rms_att_weight, DType::dt_f32, {config->dim, 0, 0, 0}
+    rms_att_weight, DType::F32, {config->dim, 0, 0, 0}
   ));
   _rms_ffn_weight = static_cast<float*>(check_tensor(
-    rms_ffn_weight, DType::dt_f32, {config->dim, 0, 0, 0}
+    rms_ffn_weight, DType::F32, {config->dim, 0, 0, 0}
   ));
 
   _wq = check_tensor(
@@ -222,11 +222,11 @@ void Block::block(
   }
 
   switch (_config->weight_dtype) {
-    case DType::dt_f32: {
+    case DType::F32: {
       _block_cpu<float>(s, pos, kv_pos, kv_len);
       break;
     }
-    case DType::dt_f16: {
+    case DType::F16: {
 #if defined(__AVX2__) && defined(__F16C__)
       _block_cpu<f16_t>(s, pos, kv_pos, kv_len);
 #else
@@ -327,7 +327,7 @@ Model::Model(YALMData& yalm) {
 
   rms_final_weight = static_cast<float*>(check_tensor(
     get_tensor(yalm, "model.norm.weight"), 
-    DType::dt_f32, 
+    DType::F32, 
     {config->dim, 0, 0, 0}
   ));
   wcls = check_tensor(

@@ -288,14 +288,14 @@ template void Block::_block_cpu<f16_t>(InferenceState&, int, int, int) const;
 void Model::_copy_embedding(InferenceState& s, int token) {
   const Config& c = *config;
   switch (c.weight_dtype) {
-    case DType::dt_f32: {
+    case DType::F32: {
       float* emb = static_cast<float*>(token_embedding_table);
       for (int i = 0; i < c.dim; ++i) {
         s.x()[i] = emb[token * c.dim + i];
       }
       break;
     }
-    case DType::dt_f16: {
+    case DType::F16: {
 #if defined(__AVX2__) && defined(__F16C__)
       f16_t* emb = static_cast<f16_t*>(token_embedding_table);
       for (int i = 0; i < c.dim; i+=1) {
@@ -342,11 +342,11 @@ void Model::_forward_cpu(InferenceState& s, int token, int pos, InferenceMode mo
 
   // classifier into logits
   switch (c.weight_dtype) {
-    case DType::dt_f32: {
+    case DType::F32: {
       matmul(s.logits(), s.x(), static_cast<float*>(wcls), c.dim, c.vocab_size);
       break;
     }
-    case DType::dt_f16: {
+    case DType::F16: {
       matmul(s.logits(), s.x(), static_cast<f16_t*>(wcls), c.dim, c.vocab_size);
       break;
     }
