@@ -76,6 +76,7 @@ struct InferenceState {
   float* logits() const { return _logits; }
 
   void cuda();
+  Device device() const { return _device; }
 
 private:
   std::shared_ptr<Config> _config;

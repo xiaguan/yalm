@@ -354,6 +354,11 @@ void Model::cuda() {
 }
 
 void Model::forward(InferenceState& s, int token, int pos, InferenceMode mode) {
+  if (s.device() != _device) {
+    std::cerr << "FATAL: inference state device mismatch" << std::endl;
+    assert(false);
+    return;
+  }
   if (_device == Device::CUDA) {
     _forward_cuda(s, token, pos, mode);
   } else {

@@ -14,9 +14,10 @@
 #include "tokenizer.h"
 
 void error_usage() {
-	fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
-	fprintf(stderr, "Example: run model.yalm -i \"Q: What is the meaning of life?\"\n");
+	fprintf(stderr, "Usage:   main <checkpoint> [options]\n");
+	fprintf(stderr, "Example: main model.yalm -i \"Q: What is the meaning of life?\"\n");
 	fprintf(stderr, "Options:\n");
+  fprintf(stderr, "  -d [cpu,cuda] which device to use (default - cuda)\n");
   fprintf(stderr, "  -m [completion,perplexity] which mode to run in (default - completion)\n");
   fprintf(stderr, "  Choose one:\n");
 	fprintf(stderr, "    -i <string> input prompt\n");
@@ -30,6 +31,7 @@ void error_usage() {
 int main(int argc, char* argv[]) {
   std::string checkpoint_path = "";    // e.g. out/model.bin
   // Options
+  std::string device = "cuda";         // cpu or cuda
   std::string mode = "completion";     // completion or perplexity
   std::string prompt = "";             // prompt string
   std::string prompt_path = "";        // prompt file path
@@ -63,6 +65,19 @@ int main(int argc, char* argv[]) {
         mode = "completion";
       } else if (std::string("perplexity").starts_with(mode)) {
         mode = "perplexity";
+      } else {
+        error_usage();
+      }
+      i += 2;
+    } else if (argv[i][1] == 'd') {
+      if (i + 1 >= argc) {
+        error_usage();
+      }
+      device = argv[i + 1];
+      if (std::string("cpu").starts_with(device)) {
+        device = "cpu";
+      } else if (std::string("cuda").starts_with(device)) {
+        device = "cuda";
       } else {
         error_usage();
       }
@@ -115,6 +130,11 @@ int main(int argc, char* argv[]) {
   if (num_steps == 0) {
     // `-n 0` means use the full context length
     num_steps = model.config->max_seq_len;
+  }
+  if (device == "cuda") {
+    std::cout << "Using CUDA" << std::endl;
+    model.cuda();
+    state.cuda();
   }
 
   // Do one inference as warmup.
