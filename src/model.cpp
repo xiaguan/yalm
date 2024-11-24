@@ -217,7 +217,19 @@ void Block::block(
   int kv_len          // number of tokens in the kv cache that we will attend over
 ) const {
   if (_device == Device::CUDA) {
-    _block_cuda(s, pos, kv_pos, kv_len);
+    switch (_config->weight_dtype) {
+      case DType::F32: {
+        _block_cuda<float>(s, pos, kv_pos, kv_len);
+        break;
+      }
+      case DType::F16: {
+        _block_cuda<f16_t>(s, pos, kv_pos, kv_len);
+        break;
+      }
+      default: {
+        assert(false && "unsupported weight dtype for cuda");
+      }
+    }
   } else {
     switch (_config->weight_dtype) {
       case DType::F32: {
@@ -233,7 +245,7 @@ void Block::block(
         break;
       }
       default: {
-        assert(false && "unsupported weight dtype");
+        assert(false && "unsupported weight dtype for cpu");
       }
     }
   }

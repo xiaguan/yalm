@@ -1,5 +1,7 @@
 #include "model.h"
 
+#include <cuda_fp16.h>
+
 #include <cfloat>
 #include <math.h>
 #include <stdio.h>
@@ -157,8 +159,19 @@ inline float matmul_row(const float* row, const float* x, int offset, int dim) {
 	return warp_reduce_sum(sum);
 }
 
+__device__
+inline float matmul_row(const half* row, const float* x, int offset, int dim) {
+	float sum = 0.0;
+	for (int j = offset; j < dim; j += warpSize) {
+		float v = __half2float(row[j]) * x[j];
+		sum += v;
+	}
+	return warp_reduce_sum(sum);
+}
+
+template <typename T>
 __global__
-void matmul(const float* A, const float* x, int n, int d, float* out) {
+void matmul(const T* A, const float* x, int n, int d, float* out) {
 	// A (d,n) @ x (n,) -> out (d,)
 	// PRECOND: Block is 1-D.
 	int i = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
@@ -356,6 +369,18 @@ void copy_embedding(
 }
 
 __global__
+void copy_embedding(
+	const half* token_embedding_table, int dim, int token, float* out
+) {
+	// PRECOND: grid and blocks are 1-D
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if (i >= dim) return;
+	
+	const half* v = token_embedding_table + dim * token;
+	out[i] = __half2float(v[i]);
+}
+
+__global__
 void copy_kv_entry(
 	const float* in, int kv_pos, int kv_dim, float* kb
 ) {
@@ -366,10 +391,10 @@ void copy_kv_entry(
 	kb[kv_pos * kv_dim + i] = in[i];
 }
 
+template <typename T>
 void Block::_block_cuda(
 	InferenceState& s, int pos, int kv_pos, int kv_len
 ) const {
-	// TODO: support f16
 	const Config& c = *_config;
 	
 	// attention pre-norm
@@ -388,13 +413,13 @@ void Block::_block_cuda(
   // qkv matmuls for this position
   matmul<<<
     (q_dim + warp_size - 1)/warp_size, warp_size
-  >>>(wq<float>(), s.xb(), c.dim, q_dim, s.q());
+  >>>(wq<T>(), s.xb(), c.dim, q_dim, s.q());
   matmul<<<
     (kv_dim + warp_size - 1)/warp_size, warp_size
-  >>>(wk<float>(), s.xb(), c.dim, kv_dim, s.k());
+  >>>(wk<T>(), s.xb(), c.dim, kv_dim, s.k());
   matmul<<<
     (kv_dim + warp_size - 1)/warp_size, warp_size
-  >>>(wv<float>(), s.xb(), c.dim, kv_dim, s.v());
+  >>>(wv<T>(), s.xb(), c.dim, kv_dim, s.v());
   
   // some models require clipping qkv values
   clip<<<
@@ -471,7 +496,7 @@ void Block::_block_cuda(
 	// final matmul projection via wo, using `hb` as temp storage
 	matmul<<<
     (c.dim + warp_size - 1)/warp_size, warp_size
-  >>>(wo<float>(), s.att(), q_dim, c.dim, s.hb());
+  >>>(wo<T>(), s.att(), q_dim, c.dim, s.hb());
 	
 	// attn residual back into x
 	add_residuals<<<
@@ -495,10 +520,10 @@ void Block::_block_cuda(
   // Note this is a feedforward with a GLU, not a simple MLP.
   matmul<<<
     (c.hidden_dim + warp_size - 1)/warp_size, warp_size
-  >>>(w1<float>(), s.xb(), c.dim, c.hidden_dim, s.hb());
+  >>>(w1<T>(), s.xb(), c.dim, c.hidden_dim, s.hb());
   matmul<<<
     (c.hidden_dim + warp_size - 1)/warp_size, warp_size
-  >>>(w3<float>(), s.xb(), c.dim, c.hidden_dim, s.hb2());
+  >>>(w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb2());
   switch (c.act) {
 	  case ActivationType::GELU: {
 		  glu_gelu<<<
@@ -522,7 +547,7 @@ void Block::_block_cuda(
   
   matmul<<<
     (c.dim + warp_size - 1)/warp_size, warp_size
-  >>>(w2<float>(), s.hb(), c.hidden_dim, c.dim, s.xb2());
+  >>>(w2<T>(), s.hb(), c.hidden_dim, c.dim, s.xb2());
   
 	// ffn residual back into x
 	add_residuals<<<
@@ -533,18 +558,38 @@ void Block::_block_cuda(
 	);
 }
 
+template void Block::_block_cuda<float>(InferenceState&, int, int, int) const;
+template void Block::_block_cuda<half>(InferenceState&, int, int, int) const;
+template<> void Block::_block_cuda<f16_t>(InferenceState& s, int pos, int kv_pos, int kv_len) const {
+  _block_cuda<half>(s, pos, kv_pos, kv_len);
+}
+
 void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode) {
 	const Config& c = *config;
-	if (c.weight_dtype != DType::F32) {
-		assert(false && "unsupported weight dtype for CUDA");
-	}
 	
-	copy_embedding<<<
-    (c.dim + max_threads_per_block - 1)/max_threads_per_block,
-		max_threads_per_block
-	>>>(
-		static_cast<float*>(token_embedding_table), c.dim, token, s.x()
-	);
+  switch (c.weight_dtype) {
+    case DType::F32: {
+	    copy_embedding<<<
+        (c.dim + max_threads_per_block - 1)/max_threads_per_block,
+        max_threads_per_block
+      >>>(
+        static_cast<float*>(token_embedding_table), c.dim, token, s.x()
+      );
+      break;
+    }
+    case DType::F16: {
+	    copy_embedding<<<
+        (c.dim + max_threads_per_block - 1)/max_threads_per_block,
+        max_threads_per_block
+      >>>(
+        static_cast<half*>(token_embedding_table), c.dim, token, s.x()
+      );
+      break;
+    }
+    default: {
+      assert(false && "unsupported weight dtype for CUDA");
+    }
+  }
 	
 	// TODO: attention sinks
 	int kv_pos = pos % c.max_seq_len;
@@ -577,6 +622,12 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
 	    matmul<<<
 		    (c.vocab_size + warp_size - 1)/warp_size, warp_size
 	    >>>(static_cast<float*>(wcls), s.x(), c.dim, c.vocab_size, s.logits());
+      break;
+    }
+    case DType::F16: {
+	    matmul<<<
+		    (c.vocab_size + warp_size - 1)/warp_size, warp_size
+	    >>>(static_cast<half*>(wcls), s.x(), c.dim, c.vocab_size, s.logits());
       break;
     }
     default: {

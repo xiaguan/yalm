@@ -156,6 +156,7 @@ private:
     int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
+  template <typename T>
   void _block_cuda(
     InferenceState& s,  // inference state
     int pos,            // index of the current token in the sequence
