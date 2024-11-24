@@ -217,6 +217,9 @@ private:
   Device _device = Device::CPU;
 };
 
+////////////////////////////////////////
+// Exposed for tests
+////////////////////////////////////////
 void attn(
   float* xout,    // (dim,) - output vector
   float* atth,    // (kv_len,) - scratch space to hold attention scores of the sequence
@@ -227,3 +230,35 @@ void attn(
   int n_kv_heads, // number of kv heads, can be < n_heads (1 is MultiQueryAttention, >1 is GroupedQueryAttention)
   int kv_len      // number of tokens of the sequence we will attend over
 );
+
+void mha_cpu(
+  float* xout,  // (head_dim,)
+  float* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* q,     // (n_heads, head_dim)
+  int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
+);
+void mha_cuda(
+  float* xout,  // (head_dim,)
+  float* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* q,     // (n_heads, head_dim)
+  int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
+);
+
+void matmul_cpu(float* xout, float* x, float* w, int n, int d);
+void matmul_cuda(float* xout, float* x, float* w, int n, int d);
+
+void ffn_cpu(
+  float* xout, float* x, 
+  float* w1, float* w2, float* w3, 
+  int hidden_dim, int dim,
+  ActivationType act
+);
+void ffn_cuda(
+  float* xout, float* x, 
+  float* w1, float* w2, float* w3, 
+  int hidden_dim, int dim,
+  ActivationType act
+);
+////////////////////////////////////////

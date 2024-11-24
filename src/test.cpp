@@ -110,6 +110,97 @@ void test_attn() {
   }, "xout");
 }
 
+void fill_random(float* data, size_t N, unsigned long seed) {
+  std::default_random_engine gen(seed);
+  std::normal_distribution<float> dist(0.0, 1.0);
+  for (size_t i = 0; i < N; i++) {
+    data[i] = dist(gen);
+  }
+}
+
+void test_cuda_kernels() {
+  int head_dim = 3;
+  int n_heads = 2;
+  int dim = head_dim * n_heads;
+  int hidden_dim = dim;
+  int n_kv_heads = 1;
+  int max_seq_len = 4;
+  int kv_len = 4;
+
+  // matmul
+  {
+    std::vector<float> w(dim * head_dim);
+    fill_random(w.data(), w.size(), 0);
+    std::vector<float> x(dim);
+    fill_random(x.data(), x.size(), 1);
+    std::vector<float> xout_cpu(head_dim);
+    std::vector<float> xout_cuda(head_dim);
+    matmul_cpu(xout_cpu.data(), x.data(), w.data(), dim, head_dim);
+    matmul_cuda(xout_cuda.data(), x.data(), w.data(), dim, head_dim);
+    assertArrayEquals(xout_cuda, xout_cpu, "matmul");
+  }
+
+  // mha
+  {
+    std::vector<float> kb(max_seq_len * n_kv_heads * head_dim);
+    fill_random(kb.data(), kb.size(), 0);
+    std::vector<float> vb(max_seq_len * n_kv_heads * head_dim);
+    fill_random(vb.data(), vb.size(), 1);
+    std::vector<float> q(n_heads * head_dim);
+    fill_random(q.data(), q.size(), 2);
+    std::vector<float> xout_cpu(head_dim);
+    std::vector<float> xout_cuda(head_dim);
+    mha_cpu(
+      xout_cpu.data(), 
+      kb.data(), 
+      vb.data(), 
+      q.data(), 
+      head_dim, kv_len, max_seq_len, n_heads, n_kv_heads
+    );
+    mha_cuda(
+      xout_cuda.data(), 
+      kb.data(), 
+      vb.data(), 
+      q.data(), 
+      head_dim, kv_len, max_seq_len, n_heads, n_kv_heads
+    );
+    assertArrayEquals(xout_cuda, xout_cpu, "mha");
+  }
+
+  // ffn
+  {
+    std::vector<float> x(dim);
+    fill_random(x.data(), x.size(), 0);
+    std::vector<float> w1(dim * hidden_dim);
+    fill_random(w1.data(), w1.size(), 1); 
+    std::vector<float> w2(hidden_dim * dim);
+    fill_random(w2.data(), w2.size(), 2);
+    std::vector<float> w3(dim * hidden_dim);
+    fill_random(w3.data(), w3.size(), 3);
+    std::vector<float> xout_cpu(dim);
+    std::vector<float> xout_cuda(dim);
+    ffn_cpu(
+      xout_cpu.data(), 
+      x.data(), 
+      w1.data(), 
+      w2.data(), 
+      w3.data(), 
+      hidden_dim, dim, 
+      ActivationType::GELU
+    );
+    ffn_cuda(
+      xout_cuda.data(), 
+      x.data(), 
+      w1.data(), 
+      w2.data(), 
+      w3.data(), 
+      hidden_dim, dim, 
+      ActivationType::GELU
+    );
+    assertArrayEquals(xout_cuda, xout_cpu, "ffn");
+  }
+}
+
 // Helper function to allocate aligned memory
 float* allocateAlignedArray(size_t N) {
   // Allocate aligned memory (64-byte alignment for AVX-512)
@@ -133,11 +224,7 @@ void mem_bench() {
   std::cout << "Filling data..." << std::endl;
 #pragma omp parallel for num_threads(N_THREADS)
   for (size_t i = 0; i < N_THREADS; i++) {
-    std::default_random_engine gen((unsigned long)i);
-    std::normal_distribution<float> dist(0.0, 1.0);
-    for (size_t j = 0; j < ELS_PER_THREAD; j++) {
-      data[i * ELS_PER_THREAD + j] = dist(gen);
-    }
+    fill_random(data + i * ELS_PER_THREAD, ELS_PER_THREAD, (unsigned long)i);
   }
   std::cout << "Running memory bandwidth test..." << std::endl;
 
@@ -227,6 +314,7 @@ int main(int argc, char* argv[]) {
     mem_bench2();
   } else {
     test_attn();
+    test_cuda_kernels();
   }
   std::cout << "All tests passed" << std::endl;
   return 0;

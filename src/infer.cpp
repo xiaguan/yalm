@@ -282,6 +282,66 @@ void Block::_block_cpu(
   }
 }
 
+void mha_cpu(
+  float* xout,  // (head_dim,)
+  float* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* q,     // (n_heads, head_dim)
+  int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
+) {
+  float* att = new float[n_heads * max_seq_len];
+  // Multihead attention. Iterate over all heads.
+  int q_per_kv_head = n_heads / n_kv_heads; // query heads per kv head (for MultiQueryAttention/GroupedQueryAttention)
+  int h;
+#pragma omp parallel for private(h)
+  for (h = 0; h < n_heads; h++) {
+    int kv_head_offset = (h / q_per_kv_head) * head_dim;
+    float* kh = kb + kv_head_offset;
+    float* vh = vb + kv_head_offset;
+    attn(
+      xout + head_dim * h, att + max_seq_len * h, q + head_dim * h, 
+      kh, vh, head_dim, n_kv_heads, kv_len
+    );
+  }
+}
+
+void matmul_cpu(float* xout, float* x, float* w, int n, int d) {
+  matmul(xout, x, w, n, d);
+}
+
+void ffn_cpu(
+  float* xout, float* x, 
+  float* w1, float* w2, float* w3, 
+  int hidden_dim, int dim,
+  ActivationType act
+) {
+  float* hb = new float[hidden_dim];
+  float* hb2 = new float[hidden_dim];
+  // mix self.w2(F.silu(self.w1(x)) * self.w3(x))
+  // Note this is a feedforward with a GLU, not a simple MLP.
+  matmul(hb, x, w1, dim, hidden_dim);
+  matmul(hb2, x, w3, dim, hidden_dim);
+  switch (act) {
+    case ActivationType::GELU: {
+      for (int i = 0; i < hidden_dim; ++i) {
+        hb[i] = gelu(hb[i]) * hb2[i];
+      }
+      break;
+    }
+    case ActivationType::SILU: {
+      for (int i = 0; i < hidden_dim; ++i) {
+        hb[i] = silu(hb[i]) * hb2[i];
+      }
+      break;
+    }
+  }
+
+  matmul(xout, hb, w2, hidden_dim, dim);
+  
+  delete[] hb;
+  delete[] hb2;
+}
+
 template void Block::_block_cpu<float>(InferenceState&, int, int, int) const;
 template void Block::_block_cpu<f16_t>(InferenceState&, int, int, int) const;
 

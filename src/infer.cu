@@ -558,6 +558,124 @@ void Block::_block_cuda(
 	);
 }
 
+void mha_cuda(
+  float* xout,  // (head_dim,)
+  float* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  float* q,     // (n_heads, head_dim)
+  int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
+) {
+  int warp_size = 32;
+  int max_threads_per_block = 1024;
+  // leak forever...
+  float* att = new float[n_heads * max_seq_len];
+  // all cuda uploads leak forever...
+  register_cuda_host(xout, n_heads * head_dim * sizeof(float));
+  att = static_cast<float*>(upload_cuda(att, n_heads * max_seq_len * sizeof(float)));
+  kb = static_cast<float*>(upload_cuda(kb, max_seq_len * n_kv_heads * head_dim * sizeof(float)));
+  vb = static_cast<float*>(upload_cuda(vb, max_seq_len * n_kv_heads * head_dim * sizeof(float)));
+  q = static_cast<float*>(upload_cuda(q, n_heads * head_dim * sizeof(float)));
+  // multihead attention: dot products and softmax
+	{
+		dim3 tpb;
+		tpb.x = warp_size;
+		tpb.y = max_threads_per_block / warp_size;
+		dim3 blocks;
+		blocks.x = (kv_len + tpb.x - 1) / tpb.x;
+		blocks.y = (n_heads + tpb.y - 1) / tpb.y;
+		attn<<<blocks, tpb>>>(
+			kb, q, head_dim, kv_len, max_seq_len, n_heads, att
+		);
+		attn_softmax<<<n_heads, warp_size>>>(
+			att, kv_len, max_seq_len, n_heads, att
+		);
+	}
+  // multihead attention: mix values with attention scores
+	{
+		dim3 tpb;
+		tpb.x = warp_size;
+		dim3 blocks;
+		blocks.x = n_heads;
+		blocks.y = head_dim;
+		att_mix<<<blocks, tpb>>>(
+			vb, att,
+			head_dim, n_heads, n_kv_heads, 
+			kv_len, max_seq_len, xout
+		);
+	}
+  CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
+	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+}
+
+void matmul_cuda(float* xout, float* x, float* w, int n, int d) {
+  int warp_size = 32;
+  // A (d,n) @ x (n,) -> out (d,)
+
+  // all cuda uploads leak forever...
+  register_cuda_host(xout, d * sizeof(float));
+  x = static_cast<float*>(upload_cuda(x, n * sizeof(float)));
+  w = static_cast<float*>(upload_cuda(w, n * d * sizeof(float)));
+  matmul<<<d, warp_size>>>(w, x, n, d, xout);
+  CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
+	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+}
+
+void ffn_cuda(
+  float* xout, float* x, 
+  float* w1, float* w2, float* w3, 
+  int hidden_dim, int dim,
+  ActivationType act
+) {
+  int warp_size = 32;
+  int max_threads_per_block = 1024;
+  // all cuda uploads leak forever...
+  register_cuda_host(xout, dim * sizeof(float));
+  x = static_cast<float*>(upload_cuda(x, dim * sizeof(float)));
+  w1 = static_cast<float*>(upload_cuda(w1, hidden_dim * dim * sizeof(float)));
+  w2 = static_cast<float*>(upload_cuda(w2, dim * hidden_dim * sizeof(float)));
+  w3 = static_cast<float*>(upload_cuda(w3, hidden_dim * dim * sizeof(float)));
+  float* hb = new float[hidden_dim];
+  float* hb2 = new float[hidden_dim];
+  hb = static_cast<float*>(upload_cuda(hb, hidden_dim * sizeof(float)));
+  hb2 = static_cast<float*>(upload_cuda(hb2, hidden_dim * sizeof(float)));
+  // hb, hb2 leak forever on cpu too...
+
+  // mix self.w2(F.silu(self.w1(x)) * self.w3(x))
+  // Note this is a feedforward with a GLU, not a simple MLP.
+  matmul<<<
+    (hidden_dim + warp_size - 1)/warp_size, warp_size
+  >>>(w1, x, dim, hidden_dim, hb);
+  matmul<<<
+    (hidden_dim + warp_size - 1)/warp_size, warp_size
+  >>>(w3, x, dim, hidden_dim, hb2);
+  switch (act) {
+	  case ActivationType::GELU: {
+		  glu_gelu<<<
+			  (hidden_dim + max_threads_per_block - 1)/max_threads_per_block, 
+			  max_threads_per_block
+		  >>>(
+				hb, hb2, hidden_dim, hb
+			);
+		  break;
+	  }
+	  case ActivationType::SILU: {
+		  glu_silu<<<
+			  (hidden_dim + max_threads_per_block - 1)/max_threads_per_block, 
+			  max_threads_per_block
+		  >>>(
+				hb, hb2, hidden_dim, hb
+			);
+		  break;
+	  }
+  }
+  
+  matmul<<<
+    (dim + warp_size - 1)/warp_size, warp_size
+  >>>(w2, hb, hidden_dim, dim, xout);
+  CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
+	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+}
+
 template void Block::_block_cuda<float>(InferenceState&, int, int, int) const;
 template void Block::_block_cuda<half>(InferenceState&, int, int, int) const;
 template<> void Block::_block_cuda<f16_t>(InferenceState& s, int pos, int kv_pos, int kv_len) const {
