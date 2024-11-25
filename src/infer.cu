@@ -206,6 +206,7 @@ void attn(
 	for (int i = 0; i < head_dim; i++) {
 		score += query[i] * key[i];
 	}
+  out[h * max_seq_len + t] = score / sqrtf((float)head_dim);
 }
 
 __global__
@@ -259,6 +260,7 @@ void att_mix(
 	int g = h / group_size;
 	int i = blockIdx.y;
 	int offset = threadIdx.x;
+  int kv_stride = n_kv_heads * head_dim;
 	
 	const float* atth = att + max_seq_len * h;
 	const float* vh = vb + max_seq_len * head_dim * g;
@@ -266,7 +268,7 @@ void att_mix(
 	
 	float sum = 0.0;
 	for (int t = offset; t < seq_len; t += warpSize) {
-		sum += vh[head_dim * t + offset] * atth[t];
+		sum += vh[kv_stride * t + i] * atth[t];
 	}
 	sum = warp_reduce_sum(sum);
 	if (offset == 0) outh[i] = sum;
@@ -463,7 +465,7 @@ void Block::_block_cuda(
 	{
 		dim3 tpb;
 		tpb.x = warp_size;
-		tpb.y = max_threads_per_block / warp_size;
+		tpb.y = c.n_heads / c.n_kv_heads;
 		dim3 blocks;
 		blocks.x = (kv_len + tpb.x - 1) / tpb.x;
 		blocks.y = (c.n_heads + tpb.y - 1) / tpb.y;
@@ -552,7 +554,6 @@ void mha_cuda(
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
   int warp_size = 32;
-  int max_threads_per_block = 1024;
   // leak forever...
   float* att = new float[n_heads * max_seq_len];
   // all cuda uploads leak forever...
@@ -565,7 +566,7 @@ void mha_cuda(
 	{
 		dim3 tpb;
 		tpb.x = warp_size;
-		tpb.y = max_threads_per_block / warp_size;
+		tpb.y = n_heads / n_kv_heads;
 		dim3 blocks;
 		blocks.x = (kv_len + tpb.x - 1) / tpb.x;
 		blocks.y = (n_heads + tpb.y - 1) / tpb.y;
