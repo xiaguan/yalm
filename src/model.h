@@ -232,14 +232,16 @@ void attn(
 );
 
 void mha_cpu(
-  float* xout,  // (head_dim,)
+  float* xout,  // (n_heads, head_dim)
+  float* att,   // (n_heads, max_seq_len)
   float* kb,    // (max_seq_len, n_kv_heads, head_dim)
   float* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 );
 void mha_cuda(
-  float* xout,  // (head_dim,)
+  float* xout,  // (n_heads, head_dim)
+  float* att,   // (n_heads, max_seq_len)
   float* kb,    // (max_seq_len, n_kv_heads, head_dim)
   float* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
@@ -247,6 +249,7 @@ void mha_cuda(
 );
 
 void matmul_cpu(float* xout, float* x, float* w, int n, int d);
+void matmul_cpu(float* xout, float* x, f16_t* w, int n, int d);
 void matmul_cuda(float* xout, float* x, float* w, int n, int d);
 
 void ffn_cpu(

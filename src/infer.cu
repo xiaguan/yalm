@@ -547,15 +547,14 @@ void Block::_block_cuda(
 }
 
 void mha_cuda(
-  float* xout,  // (head_dim,)
+  float* xout,  // (n_heads, head_dim)
+  float* att,   // (n_heads, max_seq_len)
   float* kb,    // (max_seq_len, n_kv_heads, head_dim)
   float* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
   int warp_size = 32;
-  // leak forever...
-  float* att = new float[n_heads * max_seq_len];
   // all cuda uploads leak forever...
   register_cuda_host(xout, n_heads * head_dim * sizeof(float));
   register_cuda_host(att, n_heads * max_seq_len * sizeof(float));

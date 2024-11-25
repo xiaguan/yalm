@@ -283,13 +283,13 @@ void Block::_block_cpu(
 }
 
 void mha_cpu(
-  float* xout,  // (head_dim,)
+  float* xout,  // (n_heads, head_dim)
+  float* att,   // (n_heads, max_seq_len)
   float* kb,    // (max_seq_len, n_kv_heads, head_dim)
   float* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
-  float* att = new float[n_heads * max_seq_len];
   // Multihead attention. Iterate over all heads.
   int q_per_kv_head = n_heads / n_kv_heads; // query heads per kv head (for MultiQueryAttention/GroupedQueryAttention)
   int h;
@@ -306,6 +306,9 @@ void mha_cpu(
 }
 
 void matmul_cpu(float* xout, float* x, float* w, int n, int d) {
+  matmul(xout, x, w, n, d);
+}
+void matmul_cpu(float* xout, float* x, f16_t* w, int n, int d) {
   matmul(xout, x, w, n, d);
 }
 

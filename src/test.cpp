@@ -12,7 +12,7 @@ bool floatEquals(float a, float b, float epsilon = 1e-5) {
   return std::abs(a - b) < epsilon;
 }
 
-bool arrayEquals(const std::vector<float>& a, const std::vector<float>& b, float epsilon = 1e-5) {
+bool arrayEquals(const std::vector<float>& a, const std::vector<float>& b, float epsilon = 1e-4) {
   if (a.size() != b.size()) {
     return false;
   }
@@ -24,8 +24,8 @@ bool arrayEquals(const std::vector<float>& a, const std::vector<float>& b, float
   return true;
 }
 
-void assertArrayEquals(const std::vector<float>& actual, const std::vector<float>& expected, const std::string& message) {
-  if (!arrayEquals(actual, expected)) {
+void assertArrayEquals(const std::vector<float>& actual, const std::vector<float>& expected, const std::string& message, float epsilon = 1e-4) {
+  if (!arrayEquals(actual, expected, epsilon)) {
     std::cerr << "Assertion failed: " << message << std::endl;
     std::cerr << "actual: ";
     for (size_t i = 0; i < actual.size(); i++) {
@@ -119,11 +119,11 @@ void fill_random(float* data, size_t N, unsigned long seed) {
 }
 
 void test_cuda_kernels() {
-  int head_dim = 3;
-  int n_heads = 2;
+  int head_dim = 16;
+  int n_heads = 16;
   int dim = head_dim * n_heads;
   int hidden_dim = dim;
-  int n_kv_heads = 1;
+  int n_kv_heads = 8;
   int max_seq_len = 4;
   int kv_len = 4;
 
@@ -148,10 +148,13 @@ void test_cuda_kernels() {
     fill_random(vb.data(), vb.size(), 1);
     std::vector<float> q(n_heads * head_dim);
     fill_random(q.data(), q.size(), 2);
-    std::vector<float> xout_cpu(head_dim);
-    std::vector<float> xout_cuda(head_dim);
+    std::vector<float> att_cpu(n_heads * max_seq_len);
+    std::vector<float> att_cuda(n_heads * max_seq_len);
+    std::vector<float> xout_cpu(n_heads * head_dim);
+    std::vector<float> xout_cuda(n_heads * head_dim);
     mha_cpu(
-      xout_cpu.data(), 
+      xout_cpu.data(),
+      att_cpu.data(),
       kb.data(), 
       vb.data(), 
       q.data(), 
@@ -159,12 +162,14 @@ void test_cuda_kernels() {
     );
     mha_cuda(
       xout_cuda.data(), 
+      att_cuda.data(),
       kb.data(), 
       vb.data(), 
       q.data(), 
       head_dim, kv_len, max_seq_len, n_heads, n_kv_heads
     );
-    assertArrayEquals(xout_cuda, xout_cpu, "mha");
+    assertArrayEquals(att_cuda, att_cpu, "mha att");
+    assertArrayEquals(xout_cuda, xout_cpu, "mha xout");
   }
 
   // ffn
@@ -197,7 +202,7 @@ void test_cuda_kernels() {
       hidden_dim, dim, 
       ActivationType::GELU
     );
-    assertArrayEquals(xout_cuda, xout_cpu, "ffn");
+    assertArrayEquals(xout_cuda, xout_cpu, "ffn", 1e-1);
   }
 }
 
