@@ -557,7 +557,7 @@ void mha_cuda(
   float* att = new float[n_heads * max_seq_len];
   // all cuda uploads leak forever...
   register_cuda_host(xout, n_heads * head_dim * sizeof(float));
-  att = static_cast<float*>(upload_cuda(att, n_heads * max_seq_len * sizeof(float)));
+  register_cuda_host(att, n_heads * max_seq_len * sizeof(float));
   kb = static_cast<float*>(upload_cuda(kb, max_seq_len * n_kv_heads * head_dim * sizeof(float)));
   vb = static_cast<float*>(upload_cuda(vb, max_seq_len * n_kv_heads * head_dim * sizeof(float)));
   q = static_cast<float*>(upload_cuda(q, n_heads * head_dim * sizeof(float)));
@@ -591,6 +591,8 @@ void mha_cuda(
 	}
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
 	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+  unregister_cuda_host(xout);
+  unregister_cuda_host(att);
 }
 
 void matmul_cuda(float* xout, float* x, float* w, int n, int d) {
@@ -604,6 +606,7 @@ void matmul_cuda(float* xout, float* x, float* w, int n, int d) {
   matmul<<<d, warp_size>>>(w, x, n, d, xout);
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
 	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+  unregister_cuda_host(xout);
 }
 
 void ffn_cuda(
@@ -654,6 +657,7 @@ void ffn_cuda(
   matmul<<<dim, warp_size>>>(w2, hb, hidden_dim, dim, xout);
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
 	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+  unregister_cuda_host(xout);
 }
 
 template void Block::_block_cuda<float>(InferenceState&, int, int, int) const;
