@@ -187,13 +187,14 @@ void matmul(const T* A, const float* x, int n, int d, float* out) {
 
 __global__
 void attn(
-	const float* kb, 
-	const float* q, 
+	const float* kb,  // (max_seq_len, n_kv_heads, head_dim) 
+	const float* q,   // (n_heads, head_dim)
 	int head_dim, 
 	int kv_len, 
 	int max_seq_len, 
 	int n_heads, 
-	float* out
+  int n_kv_heads,
+	float* out        // (n_heads, kv_len)
 ) {
 	int group = blockIdx.y;
 	int t = blockIdx.x * blockDim.x + threadIdx.x;
@@ -201,7 +202,7 @@ void attn(
 	if (t >= kv_len || h >= n_heads) return;
 	
 	const float* query = q + h * head_dim;
-	const float* key = kb + max_seq_len * group + head_dim * t;
+	const float* key = kb + n_kv_heads * head_dim * t + head_dim * group;
 	float score = 0.0;
 	for (int i = 0; i < head_dim; i++) {
 		score += query[i] * key[i];
@@ -245,14 +246,14 @@ void attn_softmax(
 
 __global__
 void att_mix(
-	const float* vb, 
-	const float* att, 
+	const float* vb,  // (max_seq_len, n_kv_heads, head_dim) 
+	const float* att, // (n_heads, kv_len)
 	int head_dim, 
 	int n_heads, 
 	int n_kv_heads,
 	int seq_len, 
 	int max_seq_len, 
-	float* out
+	float* out // (n_heads, head_dim)
 ) {
 	// PRECOND: blocks are 1-D and blockDim.x == warpSize
 	int h = blockIdx.x;
@@ -263,7 +264,7 @@ void att_mix(
   int kv_stride = n_kv_heads * head_dim;
 	
 	const float* atth = att + max_seq_len * h;
-	const float* vh = vb + max_seq_len * head_dim * g;
+	const float* vh = vb + head_dim * g;
 	float* outh = out + head_dim * h;
 	
 	float sum = 0.0;
@@ -470,7 +471,7 @@ void Block::_block_cuda(
 		blocks.x = (kv_len + tpb.x - 1) / tpb.x;
 		blocks.y = (c.n_heads + tpb.y - 1) / tpb.y;
 		attn<<<blocks, tpb>>>(
-			kb, s.q(), c.head_dim, kv_len, c.max_seq_len, c.n_heads, s.att()
+			kb, s.q(), c.head_dim, kv_len, c.max_seq_len, c.n_heads, c.n_kv_heads, s.att()
 		);
 		attn_softmax<<<c.n_heads, warp_size>>>(
 			s.att(), kv_len, c.max_seq_len, c.n_heads, s.att()
@@ -490,7 +491,7 @@ void Block::_block_cuda(
 		);
 	}
 	// final matmul projection via wo, using `hb` as temp storage
-	matmul<<<c.dim, warp_size>>>(wo<T>(), s.att(), q_dim, c.dim, s.hb());
+	matmul<<<c.dim, warp_size>>>(wo<T>(), s.xb2(), q_dim, c.dim, s.hb());
 	
 	// attn residual back into x
 	add_residuals<<<
@@ -570,7 +571,7 @@ void mha_cuda(
 		blocks.x = (kv_len + tpb.x - 1) / tpb.x;
 		blocks.y = (n_heads + tpb.y - 1) / tpb.y;
 		attn<<<blocks, tpb>>>(
-			kb, q, head_dim, kv_len, max_seq_len, n_heads, att
+			kb, q, head_dim, kv_len, max_seq_len, n_heads, n_kv_heads, att
 		);
 		attn_softmax<<<n_heads, warp_size>>>(
 			att, kv_len, max_seq_len, n_heads, att
