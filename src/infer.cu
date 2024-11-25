@@ -411,15 +411,9 @@ void Block::_block_cuda(
   int kv_dim = c.n_kv_heads * c.head_dim;
 
   // qkv matmuls for this position
-  matmul<<<
-    (q_dim + warp_size - 1)/warp_size, warp_size
-  >>>(wq<T>(), s.xb(), c.dim, q_dim, s.q());
-  matmul<<<
-    (kv_dim + warp_size - 1)/warp_size, warp_size
-  >>>(wk<T>(), s.xb(), c.dim, kv_dim, s.k());
-  matmul<<<
-    (kv_dim + warp_size - 1)/warp_size, warp_size
-  >>>(wv<T>(), s.xb(), c.dim, kv_dim, s.v());
+  matmul<<<q_dim, warp_size>>>(wq<T>(), s.xb(), c.dim, q_dim, s.q());
+  matmul<<<kv_dim, warp_size>>>(wk<T>(), s.xb(), c.dim, kv_dim, s.k());
+  matmul<<<kv_dim, warp_size>>>(wv<T>(), s.xb(), c.dim, kv_dim, s.v());
   
   // some models require clipping qkv values
   clip<<<
@@ -494,9 +488,7 @@ void Block::_block_cuda(
 		);
 	}
 	// final matmul projection via wo, using `hb` as temp storage
-	matmul<<<
-    (c.dim + warp_size - 1)/warp_size, warp_size
-  >>>(wo<T>(), s.att(), q_dim, c.dim, s.hb());
+	matmul<<<c.dim, warp_size>>>(wo<T>(), s.att(), q_dim, c.dim, s.hb());
 	
 	// attn residual back into x
 	add_residuals<<<
@@ -518,12 +510,8 @@ void Block::_block_cuda(
 	
 	// mix self.w2(F.silu(self.w1(x)) * self.w3(x))
   // Note this is a feedforward with a GLU, not a simple MLP.
-  matmul<<<
-    (c.hidden_dim + warp_size - 1)/warp_size, warp_size
-  >>>(w1<T>(), s.xb(), c.dim, c.hidden_dim, s.hb());
-  matmul<<<
-    (c.hidden_dim + warp_size - 1)/warp_size, warp_size
-  >>>(w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb2());
+  matmul<<<c.hidden_dim, warp_size>>>(w1<T>(), s.xb(), c.dim, c.hidden_dim, s.hb());
+  matmul<<<c.hidden_dim, warp_size>>>(w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb2());
   switch (c.act) {
 	  case ActivationType::GELU: {
 		  glu_gelu<<<
@@ -545,9 +533,7 @@ void Block::_block_cuda(
 	  }
   }
   
-  matmul<<<
-    (c.dim + warp_size - 1)/warp_size, warp_size
-  >>>(w2<T>(), s.hb(), c.hidden_dim, c.dim, s.xb2());
+  matmul<<<c.dim, warp_size>>>(w2<T>(), s.hb(), c.hidden_dim, c.dim, s.xb2());
   
 	// ffn residual back into x
 	add_residuals<<<
@@ -642,12 +628,8 @@ void ffn_cuda(
 
   // mix self.w2(F.silu(self.w1(x)) * self.w3(x))
   // Note this is a feedforward with a GLU, not a simple MLP.
-  matmul<<<
-    (hidden_dim + warp_size - 1)/warp_size, warp_size
-  >>>(w1, x, dim, hidden_dim, hb);
-  matmul<<<
-    (hidden_dim + warp_size - 1)/warp_size, warp_size
-  >>>(w3, x, dim, hidden_dim, hb2);
+  matmul<<<hidden_dim, warp_size>>>(w1, x, dim, hidden_dim, hb);
+  matmul<<<hidden_dim, warp_size>>>(w3, x, dim, hidden_dim, hb2);
   switch (act) {
 	  case ActivationType::GELU: {
 		  glu_gelu<<<
@@ -669,9 +651,7 @@ void ffn_cuda(
 	  }
   }
   
-  matmul<<<
-    (dim + warp_size - 1)/warp_size, warp_size
-  >>>(w2, hb, hidden_dim, dim, xout);
+  matmul<<<dim, warp_size>>>(w2, hb, hidden_dim, dim, xout);
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
 	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
 }
