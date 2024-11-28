@@ -110,11 +110,11 @@ void test_attn() {
   }, "xout");
 }
 
-void fill_random(float* data, size_t N, unsigned long seed) {
+void fill_random(float* data, size_t N, unsigned long seed, float scale_factor = 1.0) {
   std::default_random_engine gen(seed);
   std::normal_distribution<float> dist(0.0, 1.0);
   for (size_t i = 0; i < N; i++) {
-    data[i] = dist(gen);
+    data[i] = dist(gen) * scale_factor;
   }
 }
 
@@ -177,11 +177,11 @@ void test_cuda_kernels() {
     std::vector<float> x(dim);
     fill_random(x.data(), x.size(), 0);
     std::vector<float> w1(dim * hidden_dim);
-    fill_random(w1.data(), w1.size(), 1); 
+    fill_random(w1.data(), w1.size(), 1, 1.0 / sqrtf(dim)); 
     std::vector<float> w2(hidden_dim * dim);
-    fill_random(w2.data(), w2.size(), 2);
+    fill_random(w2.data(), w2.size(), 2, 1.0 / sqrtf(hidden_dim));
     std::vector<float> w3(dim * hidden_dim);
-    fill_random(w3.data(), w3.size(), 3);
+    fill_random(w3.data(), w3.size(), 3, 1.0 / sqrtf(dim));
     std::vector<float> xout_cpu(dim);
     std::vector<float> xout_cuda(dim);
     ffn_cpu(
@@ -202,7 +202,7 @@ void test_cuda_kernels() {
       hidden_dim, dim, 
       ActivationType::GELU
     );
-    assertArrayEquals(xout_cuda, xout_cpu, "ffn", 1e-1);
+    assertArrayEquals(xout_cuda, xout_cpu, "ffn");
   }
 }
 
