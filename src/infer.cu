@@ -19,11 +19,28 @@
 		}                                                                                                \
 	} while (0)
 
+#define CUDA_CHECK2(x, msg)                                                                                    \
+	do {                                                                                                 \
+		cudaError_t err = x;                                                                             \
+		if (err != cudaSuccess) {                                                                        \
+			fprintf(stderr, "[%s] CUDA error in %s at %s:%d: %s (%s=%d)\n", msg.c_str(), __FUNCTION__, __FILE__, __LINE__, \
+			        cudaGetErrorString(err), cudaGetErrorName(err), err);                                \
+			abort();                                                                                     \
+		}                                                                                                \
+	} while (0)
+
 static void* cuda_devicecopy(void* host, size_t size) {
 	void* device = NULL;
 	CUDA_CHECK(cudaMalloc(&device, size));
 	CUDA_CHECK(cudaMemcpyAsync(device, host, size, cudaMemcpyHostToDevice));
 	return device;
+}
+
+static void* cuda_hostcopy(void* device, size_t size, std::string debug = "") {
+  void* host = NULL;
+  CUDA_CHECK2(cudaMallocHost(&host, size), debug);
+  CUDA_CHECK2(cudaMemcpy(host, device, size, cudaMemcpyDeviceToHost), debug);
+  return host;
 }
 
 [[maybe_unused]] static void* cuda_devicealloc(size_t size) {
@@ -40,6 +57,10 @@ static void* cuda_devicecopy(void* host, size_t size) {
 
 extern "C" void* upload_cuda(void* host, size_t size) {
 	return cuda_devicecopy(host, size);
+}
+
+extern "C" void* download_cuda(void* device, size_t size, std::string debug) {
+  return cuda_hostcopy(device, size, debug);
 }
 
 extern "C" void register_cuda_host(void* host, size_t size) {
@@ -722,15 +743,15 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
 	// classifier into logits
 	switch (c.weight_dtype) {
     case DType::F32: {
-	    matmul<<<
-		    (c.vocab_size + warp_size - 1)/warp_size, warp_size
-	    >>>(static_cast<float*>(wcls), s.x(), c.dim, c.vocab_size, s.logits());
+	    matmul<<<c.vocab_size, warp_size>>>(
+        static_cast<float*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
+      );
       break;
     }
     case DType::F16: {
-	    matmul<<<
-		    (c.vocab_size + warp_size - 1)/warp_size, warp_size
-	    >>>(static_cast<half*>(wcls), s.x(), c.dim, c.vocab_size, s.logits());
+	    matmul<<<c.vocab_size, warp_size>>>(
+        static_cast<half*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
+      );
       break;
     }
     default: {

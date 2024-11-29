@@ -20,6 +20,7 @@ enum class Device {
 };
 
 extern "C" void* upload_cuda(void* host, size_t size);
+extern "C" void* download_cuda(void* device, size_t size, std::string debug);
 extern "C" void register_cuda_host(void* host, size_t size);
 extern "C" void free_cuda(void* device);
 extern "C" void unregister_cuda_host(void* host);
