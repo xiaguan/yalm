@@ -208,6 +208,22 @@ void matmul(const T* A, const float* x, int n, int d, float* out) {
 
 template <typename T>
 __global__
+void fused_matmul_add_residuals(const T* A, const float* x, int n, int d, float* out) {
+	// A (d,n) @ x (n,) -> out (d,)
+	// PRECOND: Block is 1-D.
+	int i = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+	if (i >= d) return;
+	// Since block is 1-dimensional, thread ID is same as threadIdx.x,
+	// and warp partitions thread IDs
+	int offset = threadIdx.x % warpSize;
+	float rowSum = matmul_row(&A[n * i], x, offset, n);
+	if (offset == 0) {
+		out[i] += rowSum;
+	}
+}
+
+template <typename T>
+__global__
 void fused_qkv_matmul_clip(
 	const T* wq,      // (q_dim, dim)
 	const T* wk,      // (kv_dim, dim)
@@ -379,40 +395,39 @@ inline void rope(
 	}
 }
 
-__global__
-void add_residuals(
-	const float* x, const float* y, int d, float* out
-) {
-	// PRECOND: grid and blocks are 1-D
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if (i >= d) return;
-	
-	out[i] = x[i] + y[i];
+template <ActivationType A> __device__ inline float act(float x);
+template<> __device__ inline float act<ActivationType::SILU>(float x) {
+	return x / (1.0f + expf(-x));
+}
+template<> __device__ inline float act<ActivationType::GELU>(float x) {
+	float x3 = x * x * x;
+	return 0.5f * x * (1.0f + tanhf(0.797885f * (x + 0.044715f * x3)));
 }
 
+template <typename T, ActivationType A>
 __global__
-void glu_silu(
-	const float* x, const float* weight, int d, float* out
+void fused_ffn_w1_w3_glu_act(
+	const T* w1,        // (hidden_dim, dim)
+	const T* w3,        // (hidden_dim, dim)
+	const float* x,     // (dim,)
+	int dim,           
+	int hidden_dim,
+	float* out         // (hidden_dim,)
 ) {
-	// PRECOND: grid and blocks are 1-D
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if (i >= d) return;
+	// Each warp computes one row of both w1(x) and w3(x), then applies GLU
+	int warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+	if (warp_id >= hidden_dim) return;
 	
-	out[i] = weight[i] * x[i] / (1.0f + expf(-x[i]));
-}
-
-__global__
-void glu_gelu(
-	const float* x, const float* weight, int d, float* out
-) {
-	// PRECOND: grid and blocks are 1-D
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if (i >= d) return;
+	int offset = threadIdx.x % warpSize;
 	
-	float v = x[i];
-	out[i] =
-		weight[i] * 
-		0.5f * v * (1.0f + tanhf(0.797885f * (v + 0.044715f * v * v * v)));
+	// Compute w1(x) and w3(x) for this row
+	float sum1 = matmul_row(&w1[dim * warp_id], x, offset, dim);
+	float sum3 = matmul_row(&w3[dim * warp_id], x, offset, dim);
+	
+	// Apply activation and multiply
+	if (offset == 0) {
+		out[warp_id] = act<A>(sum1) * sum3;
+	}
 }
 
 __global__
@@ -583,15 +598,10 @@ void Block::_block_cuda(
 			kv_len, c.max_seq_len, s.xb2()
 		);
 	}
-	// final matmul projection via wo, using `hb` as temp storage
-	matmul<<<c.dim, warp_size>>>(wo<T>(), s.xb2(), q_dim, c.dim, s.hb());
-	
-	// attn residual back into x
-	add_residuals<<<
-		(c.dim + max_threads_per_block - 1)/max_threads_per_block, 
-		max_threads_per_block
-	>>>(
-		s.x(), s.hb(), c.dim, s.x()
+	// final matmul projection and residual back:
+	// x <- wo(...) + x
+	fused_matmul_add_residuals<<<c.dim, warp_size>>>(
+		wo<T>(), s.xb2(), q_dim, c.dim, s.x()
 	);
 	
 	// ffn pre-norm
@@ -606,37 +616,28 @@ void Block::_block_cuda(
 	
 	// mix self.w2(F.silu(self.w1(x)) * self.w3(x))
   // Note this is a feedforward with a GLU, not a simple MLP.
-  matmul<<<c.hidden_dim, warp_size>>>(w1<T>(), s.xb(), c.dim, c.hidden_dim, s.hb());
-  matmul<<<c.hidden_dim, warp_size>>>(w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb2());
   switch (c.act) {
 	  case ActivationType::GELU: {
-		  glu_gelu<<<
-			  (c.hidden_dim + max_threads_per_block - 1)/max_threads_per_block, 
-			  max_threads_per_block
-		  >>>(
-				s.hb(), s.hb2(), c.hidden_dim, s.hb()
+			fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
+			  c.hidden_dim, warp_size
+			>>>(
+				w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
 			);
 		  break;
 	  }
 	  case ActivationType::SILU: {
-		  glu_silu<<<
-			  (c.hidden_dim + max_threads_per_block - 1)/max_threads_per_block, 
-			  max_threads_per_block
-		  >>>(
-				s.hb(), s.hb2(), c.hidden_dim, s.hb()
+		  fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
+			  c.hidden_dim, warp_size
+			>>>(
+				w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
 			);
 		  break;
 	  }
   }
   
-  matmul<<<c.dim, warp_size>>>(w2<T>(), s.hb(), c.hidden_dim, c.dim, s.xb2());
-  
-	// ffn residual back into x
-	add_residuals<<<
-		(c.dim + max_threads_per_block - 1)/max_threads_per_block,
-		max_threads_per_block
-	>>>(
-		s.x(), s.xb2(), c.dim, s.x()
+	// add residual back: x <- w2(...) + x
+  fused_matmul_add_residuals<<<c.dim, warp_size>>>(
+		w2<T>(), s.hb(), c.hidden_dim, c.dim, s.x()
 	);
 }
 
@@ -710,7 +711,6 @@ void ffn_cuda(
   ActivationType act
 ) {
   int warp_size = 32;
-  int max_threads_per_block = 1024;
   // all cuda uploads leak forever...
   register_cuda_host(xout, dim * sizeof(float));
   x = static_cast<float*>(upload_cuda(x, dim * sizeof(float)));
@@ -723,26 +723,22 @@ void ffn_cuda(
   hb2 = static_cast<float*>(upload_cuda(hb2, hidden_dim * sizeof(float)));
   // hb, hb2 leak forever on cpu too...
 
-  // mix self.w2(F.silu(self.w1(x)) * self.w3(x))
+	// mix self.w2(F.silu(self.w1(x)) * self.w3(x))
   // Note this is a feedforward with a GLU, not a simple MLP.
-  matmul<<<hidden_dim, warp_size>>>(w1, x, dim, hidden_dim, hb);
-  matmul<<<hidden_dim, warp_size>>>(w3, x, dim, hidden_dim, hb2);
   switch (act) {
 	  case ActivationType::GELU: {
-		  glu_gelu<<<
-			  (hidden_dim + max_threads_per_block - 1)/max_threads_per_block, 
-			  max_threads_per_block
-		  >>>(
-				hb, hb2, hidden_dim, hb
+			fused_ffn_w1_w3_glu_act<float, ActivationType::GELU><<<
+			  hidden_dim, warp_size
+			>>>(
+				w1, w3, x, dim, hidden_dim, hb
 			);
 		  break;
 	  }
 	  case ActivationType::SILU: {
-		  glu_silu<<<
-			  (hidden_dim + max_threads_per_block - 1)/max_threads_per_block, 
-			  max_threads_per_block
-		  >>>(
-				hb, hb2, hidden_dim, hb
+		  fused_ffn_w1_w3_glu_act<float, ActivationType::SILU><<<
+			  hidden_dim, warp_size
+			>>>(
+				w1, w3, x, dim, hidden_dim, hb
 			);
 		  break;
 	  }
