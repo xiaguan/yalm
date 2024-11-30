@@ -361,24 +361,22 @@ void rmsnorm(const float* x, const float* weight, int size, float eps, float* ou
 	}
 }
 
-__global__
-void rope(
-	const float* x, int d, int head_dim, int pos, float theta, int rotary_dim, float* out
+__device__
+inline void rope(
+	const float* x, int pair_idx, int head_dim, int pos, float theta, int rotary_dim, float* out
 ) {
-	// PRECOND: grid and blocks are 1-D
-	int i = 2 * (blockDim.x * blockIdx.x + threadIdx.x);
-	if (i >= d) return;
-	
-	int j_head = i % head_dim;
-	float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
-	float val = pos * freq;
-	float fcr = cosf(val);
-	float fci = sinf(val);
-	
-	float v0 = x[i];
-	float v1 = x[i + 1];
-	out[i] = v0 * fcr - v1 * fci;
-	out[i + 1] = v0 * fci + v1 * fcr;
+	int j_head = pair_idx % head_dim;
+	if (j_head < head_dim - 1) {  // Ensure we have a pair of elements
+		float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+		float val = pos * freq;
+		float fcr = cosf(val);
+		float fci = sinf(val);
+		
+		float v0 = x[pair_idx];
+		float v1 = x[pair_idx + 1];
+		out[pair_idx] = v0 * fcr - v1 * fci;
+		out[pair_idx + 1] = v0 * fci + v1 * fcr;
+	}
 }
 
 __global__
@@ -475,42 +473,19 @@ void fused_rope_and_cache_update(
 	
 	// Handle Q matrix RoPE
 	if (pair_idx < n_heads * head_dim) {
-		int dim_idx = pair_idx % head_dim;
-		
-		if (dim_idx < head_dim - 1) {  // Ensure we have a pair of elements
-			float freq = dim_idx >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)dim_idx / (float)rotary_dim);
-			float val = pos * freq;
-			float fcr = cosf(val);
-			float fci = sinf(val);
-			
-			float v0 = q[pair_idx];
-			float v1 = q[pair_idx + 1];
-			q_out[pair_idx] = v0 * fcr - v1 * fci;
-			q_out[pair_idx + 1] = v0 * fci + v1 * fcr;
-		}
+		rope(
+			q, pair_idx, head_dim, pos, 
+			theta, rotary_dim, q_out
+		);
 	}
 	
 	// Handle K matrix RoPE and cache update
 	if (pair_idx < n_kv_heads * head_dim) {
-		int dim_idx = pair_idx % head_dim;
-		
-		if (dim_idx < head_dim - 1) {  // Ensure we have a pair of elements
-			// Apply RoPE to K
-			float freq = dim_idx >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)dim_idx / (float)rotary_dim);
-			float val = pos * freq;
-			float fcr = cosf(val);
-			float fci = sinf(val);
-			
-			float v0 = k[pair_idx];
-			float v1 = k[pair_idx + 1];
-			float k0 = v0 * fcr - v1 * fci;
-			float k1 = v0 * fci + v1 * fcr;
-			
-			// Store in KV cache
-			int cache_idx = kv_pos * (n_kv_heads * head_dim) + pair_idx;
-			kb[cache_idx] = k0;
-			kb[cache_idx + 1] = k1;
-		}
+		float* k_out = &kb[kv_pos * (n_kv_heads * head_dim)];
+		rope(
+			k, pair_idx, head_dim, pos, 
+			theta, rotary_dim, k_out
+		);
 	}
 	
 	// Handle V cache update (no RoPE needed)
