@@ -206,6 +206,55 @@ void matmul(const T* A, const float* x, int n, int d, float* out) {
 	}
 }
 
+template <typename T>
+__global__
+void fused_qkv_matmul_clip(
+	const T* wq,      // (q_dim, dim)
+	const T* wk,      // (kv_dim, dim)
+	const T* wv,      // (kv_dim, dim)
+	const float* x,   // (dim,)
+	int dim,          // input dimension
+	int q_dim,        // n_heads * head_dim
+	int kv_dim,       // n_kv_heads * head_dim
+	float qkv_clip,   // clipping value
+	float* q_out,     // (q_dim,)
+	float* k_out,     // (kv_dim,)
+	float* v_out      // (kv_dim,)
+) {
+	// Each warp handles one row of either Q, K, or V output
+	int warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+	int total_rows = q_dim + 2 * kv_dim;
+	if (warp_id >= total_rows) return;
+	
+	// Determine which matrix (Q, K, or V) we're computing
+	const T* w;
+	float* out;
+	if (warp_id < q_dim) {
+		// Computing Q
+		w = wq + warp_id * dim;
+		out = q_out + warp_id;
+	} else if (warp_id < q_dim + kv_dim) {
+		// Computing K
+		w = wk + (warp_id - q_dim) * dim;
+		out = k_out + (warp_id - q_dim);
+	} else {
+		// Computing V
+		w = wv + (warp_id - q_dim - kv_dim) * dim;
+		out = v_out + (warp_id - q_dim - kv_dim);
+	}
+
+	// Compute matrix multiplication for this row
+	// Since block is 1-dimensional, thread ID is same as threadIdx.x,
+	// and warp partitions thread IDs
+	int offset = threadIdx.x % warpSize;
+	float row_sum = matmul_row(w, x, offset, dim);
+	// Write result with clipping
+	if (offset == 0) {
+		row_sum = row_sum < -qkv_clip ? -qkv_clip : (row_sum > qkv_clip ? qkv_clip : row_sum);
+		*out = row_sum;
+	}
+}
+
 __global__
 void attn(
 	const float* kb,  // (max_seq_len, n_kv_heads, head_dim) 
@@ -344,17 +393,6 @@ void add_residuals(
 }
 
 __global__
-void clip(
-	const float* x, float v, int d, float* out
-) {
-	// PRECOND: grid and blocks are 1-D
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if (i >= d) return;
-	
-	out[i] = x[i] < -v ? -v : (x[i] > v ? v : x[i]);
-}
-
-__global__
 void glu_silu(
 	const float* x, const float* weight, int d, float* out
 ) {
@@ -434,24 +472,24 @@ void Block::_block_cuda(
   int q_dim = c.n_heads * c.head_dim;
   int kv_dim = c.n_kv_heads * c.head_dim;
 
-  // qkv matmuls for this position
-  matmul<<<q_dim, warp_size>>>(wq<T>(), s.xb(), c.dim, q_dim, s.q());
-  matmul<<<kv_dim, warp_size>>>(wk<T>(), s.xb(), c.dim, kv_dim, s.k());
-  matmul<<<kv_dim, warp_size>>>(wv<T>(), s.xb(), c.dim, kv_dim, s.v());
-  
-  // some models require clipping qkv values
-  clip<<<
-	  (q_dim + max_threads_per_block - 1)/max_threads_per_block, 
-	  max_threads_per_block
-  >>>(s.q(), c.qkv_clip, q_dim, s.q());
-  clip<<<
-	  (kv_dim + max_threads_per_block - 1)/max_threads_per_block, 
-	  max_threads_per_block
-  >>>(s.k(), c.qkv_clip, kv_dim, s.k());
-  clip<<<
-	  (kv_dim + max_threads_per_block - 1)/max_threads_per_block,
-	  max_threads_per_block
-  >>>(s.v(), c.qkv_clip, kv_dim, s.v());
+	{
+  	// qkv matmuls for this position
+		// some models require clipping qkv values
+		int total_rows = q_dim + 2 * kv_dim;  // Total rows across Q, K, V
+		fused_qkv_matmul_clip<<<total_rows, warp_size>>>(
+			wq<T>(),
+			wk<T>(),
+			wv<T>(),
+			s.xb(),
+			c.dim,
+			q_dim,
+			kv_dim,
+			c.qkv_clip,
+			s.q(),
+			s.k(),
+			s.v()
+		);
+	}
   
   // RoPE relative positional encoding: complex-valued rotate q and k in each head
   rope<<<
