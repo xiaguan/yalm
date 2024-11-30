@@ -415,7 +415,6 @@ void glu_gelu(
 		0.5f * v * (1.0f + tanhf(0.797885f * (v + 0.044715f * v * v * v)));
 }
 
-// TODO: consolidate copy_embedding and copy_kv_entry into 1 memcpy kernel
 __global__
 void copy_embedding(
 	const float* token_embedding_table, int dim, int token, float* out
@@ -438,17 +437,6 @@ void copy_embedding(
 	
 	const half* v = token_embedding_table + dim * token;
 	out[i] = __half2float(v[i]);
-}
-
-__global__
-void copy_kv_entry(
-	const float* in, int kv_pos, int kv_dim, float* kb
-) {
-	// PRECOND: grid and blocks are 1-D
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if (i >= kv_dim) return;
-	
-	kb[kv_pos * kv_dim + i] = in[i];
 }
 
 __global__
