@@ -453,6 +453,76 @@ void copy_kv_entry(
 	kb[kv_pos * kv_dim + i] = in[i];
 }
 
+__global__
+void fused_rope_and_cache_update(
+	const float* q,         // (n_heads * head_dim,)
+	const float* k,         // (n_kv_heads * head_dim,)
+	const float* v,         // (n_kv_heads * head_dim,)
+	int head_dim,          
+	int n_heads,
+	int n_kv_heads,
+	int pos,               // current position
+	int kv_pos,           // position in KV cache
+	float theta,          // RoPE theta parameter
+	int rotary_dim,       // how many dimensions to rotate
+	float* q_out,         // (n_heads * head_dim,)
+	float* kb,            // (max_seq_len, n_kv_heads, head_dim)
+	float* vb            // (max_seq_len, n_kv_heads, head_dim)
+) {
+	// Each thread handles two consecutive elements (for RoPE complex rotation)
+	int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	int pair_idx = tid * 2;
+	
+	// Handle Q matrix RoPE
+	if (pair_idx < n_heads * head_dim) {
+		int dim_idx = pair_idx % head_dim;
+		
+		if (dim_idx < head_dim - 1) {  // Ensure we have a pair of elements
+			float freq = dim_idx >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)dim_idx / (float)rotary_dim);
+			float val = pos * freq;
+			float fcr = cosf(val);
+			float fci = sinf(val);
+			
+			float v0 = q[pair_idx];
+			float v1 = q[pair_idx + 1];
+			q_out[pair_idx] = v0 * fcr - v1 * fci;
+			q_out[pair_idx + 1] = v0 * fci + v1 * fcr;
+		}
+	}
+	
+	// Handle K matrix RoPE and cache update
+	if (pair_idx < n_kv_heads * head_dim) {
+		int dim_idx = pair_idx % head_dim;
+		
+		if (dim_idx < head_dim - 1) {  // Ensure we have a pair of elements
+			// Apply RoPE to K
+			float freq = dim_idx >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)dim_idx / (float)rotary_dim);
+			float val = pos * freq;
+			float fcr = cosf(val);
+			float fci = sinf(val);
+			
+			float v0 = k[pair_idx];
+			float v1 = k[pair_idx + 1];
+			float k0 = v0 * fcr - v1 * fci;
+			float k1 = v0 * fci + v1 * fcr;
+			
+			// Store in KV cache
+			int cache_idx = kv_pos * (n_kv_heads * head_dim) + pair_idx;
+			kb[cache_idx] = k0;
+			kb[cache_idx + 1] = k1;
+		}
+	}
+	
+	// Handle V cache update (no RoPE needed)
+	if (pair_idx < n_kv_heads * head_dim) {
+		int cache_idx = kv_pos * (n_kv_heads * head_dim) + pair_idx;
+		if (pair_idx < n_kv_heads * head_dim - 1) {
+			vb[cache_idx] = v[pair_idx];
+			vb[cache_idx + 1] = v[pair_idx + 1];
+		}
+	}
+}
+
 template <typename T>
 void Block::_block_cuda(
 	InferenceState& s, int pos, int kv_pos, int kv_len
@@ -491,35 +561,36 @@ void Block::_block_cuda(
 		);
 	}
   
-  // RoPE relative positional encoding: complex-valued rotate q and k in each head
-  rope<<<
-	  (q_dim + max_threads_per_block - 1)/max_threads_per_block,
-	  max_threads_per_block
-  >>>(
-		s.q(), q_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim, s.q()
-	);
-	rope<<<
-	  (kv_dim + max_threads_per_block - 1)/max_threads_per_block,
-	  max_threads_per_block
-  >>>(
-		s.k(), kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim, s.k()
-	);
-	
-	// key and value point to the kv cache
+  // Update Q, K with RoPE relative positional encoding: 
+	// complex-valued rotate q and k in each head
+	// Also copy K, V to KV cache
 	float* kb = key_cache();
 	float* vb = value_cache();
-	copy_kv_entry<<<
-		(kv_dim + max_threads_per_block - 1)/max_threads_per_block, 
-		max_threads_per_block
-	>>>(
-		s.k(), kv_pos, kv_dim, kb
-	);
-	copy_kv_entry<<<
-		(kv_dim + max_threads_per_block - 1)/max_threads_per_block, 
-		max_threads_per_block
-	>>>(
-		s.v(), kv_pos, kv_dim, vb
-	);
+  {
+    // Calculate number of thread blocks needed
+    // We need enough threads to handle the largest of:
+    // - n_heads * head_dim (for Q)
+    // - n_kv_heads * head_dim (for K and V)
+    int max_dim = max(c.n_heads * c.head_dim, c.n_kv_heads * c.head_dim);
+    int threads_needed = (max_dim + 1) / 2;  // Each thread handles 2 elements
+    int num_blocks = (threads_needed + max_threads_per_block - 1) / max_threads_per_block;
+    
+    fused_rope_and_cache_update<<<num_blocks, max_threads_per_block>>>(
+			s.q(),
+			s.k(),
+			s.v(),
+			c.head_dim,
+			c.n_heads,
+			c.n_kv_heads,
+			pos,
+			kv_pos,
+			c.rope_theta,
+			c.rotary_dim,
+			s.q(),           // Q can be updated in-place
+			kb,
+			vb
+		);
+	}
 	
 	// multihead attention: dot products and softmax
 	{
