@@ -213,17 +213,18 @@ void Block::cuda() {
 void Block::block(
   InferenceState& s,  // inference state
   int pos,            // index of the current token in the sequence
+  int kv_sink,        // number of sink tokens currently in the KV cache
   int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
   int kv_len          // number of tokens in the kv cache that we will attend over
 ) const {
   if (_device == Device::CUDA) {
     switch (_config->weight_dtype) {
       case DType::F32: {
-        _block_cuda<float>(s, pos, kv_pos, kv_len);
+        _block_cuda<float>(s, pos, kv_sink, kv_pos, kv_len);
         break;
       }
       case DType::F16: {
-        _block_cuda<f16_t>(s, pos, kv_pos, kv_len);
+        _block_cuda<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
         break;
       }
       default: {
@@ -233,12 +234,12 @@ void Block::block(
   } else {
     switch (_config->weight_dtype) {
       case DType::F32: {
-        _block_cpu<float>(s, pos, kv_pos, kv_len);
+        _block_cpu<float>(s, pos, kv_sink, kv_pos, kv_len);
         break;
       }
       case DType::F16: {
 #if defined(__AVX2__) && defined(__F16C__)
-        _block_cpu<f16_t>(s, pos, kv_pos, kv_len);
+        _block_cpu<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
 #else
         assert(false && "float16 not supported on this platform");
 #endif

@@ -185,6 +185,7 @@ template <typename T>
 void Block::_block_cpu(
   InferenceState& s,  // inference state
   int pos,            // index of the current token in the sequence
+  int kv_sink,        // number of sink tokens currently in the KV cache
   int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
   int kv_len          // number of tokens in the kv cache that we will attend over
 ) const {
@@ -227,6 +228,22 @@ void Block::_block_cpu(
   for (int i = 0; i < kv_dim; ++i) {
     kb[kv_pos * kv_dim + i] = s.k()[i];
     vb[kv_pos * kv_dim + i] = s.v()[i];
+  }
+
+  // Sink tokens remain untouched while the rest of the KV cache is incrementally 
+  // replaced in ring order, but sink i must always be positioned (max_seq_len - i)
+  // away from current timestep. Hence, each forward pass, rotate sink tokens 
+  // forward by 1. See https://arxiv.org/abs/2309.17453 for more.
+  for (int r = 0; r < kv_sink; r++) {
+    for (int i = 0; i < kv_dim; ++i) {
+      s.k()[i] = kb[r * kv_dim + i];
+    }
+
+    rope(s.k(), kv_dim, c.head_dim, 1, c.rope_theta, c.rotary_dim);
+
+    for (int i = 0; i < kv_dim; i++) {
+      kb[r * kv_dim + i] = s.k()[i];
+    }
   }
 
   // Multihead attention. Iterate over all heads.
@@ -345,8 +362,8 @@ void ffn_cpu(
   delete[] hb2;
 }
 
-template void Block::_block_cpu<float>(InferenceState&, int, int, int) const;
-template void Block::_block_cpu<f16_t>(InferenceState&, int, int, int) const;
+template void Block::_block_cpu<float>(InferenceState&, int, int, int, int) const;
+template void Block::_block_cpu<f16_t>(InferenceState&, int, int, int, int) const;
 
 void Model::_copy_embedding(InferenceState& s, int token) {
   const Config& c = *config;
@@ -381,13 +398,16 @@ void Model::_forward_cpu(InferenceState& s, int token, int pos, InferenceMode mo
   // copy the token embedding into `x`
   _copy_embedding(s, token);
 
-  // TODO: attention sinks
-	int kv_pos = pos % c.max_seq_len;
+  // When decoding past the context length, keep the first few tokens in the KV cache
+  // untouched as "attention sinks" while replacing the rest in ring order.
+  // See StreamingLLM (https://arxiv.org/pdf/2309.17453) for more.
+  int kv_sink = pos >= c.max_seq_len ? KV_SINKS : 0;
+	int kv_pos = kv_sink + (pos - kv_sink) % (c.max_seq_len - kv_sink);
 	int kv_len = pos >= c.max_seq_len ? c.max_seq_len : pos + 1;
 
   // forward all layers in order
   for (auto b : blocks) {
-    b->block(s, pos, kv_pos, kv_len);
+    b->block(s, pos, kv_sink, kv_pos, kv_len);
   }
 
   if (mode == InferenceMode::HYDRATE_KV_CACHE) {

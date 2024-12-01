@@ -501,9 +501,31 @@ void fused_rope_and_cache_update(
 	}
 }
 
+__global__
+void rotate_sink_tokens(
+	float* kb, 
+	int kv_sink, 				// number of attention sinks
+	int kv_dim, 				// size of each entry (all concatenated heads) in KV cache
+	int head_dim,
+	float theta, 				// RoPE theta parameter
+	int rotary_dim			// how many dimensions to rotate
+) {
+	// Each thread handles two consecutive elements (for RoPE complex rotation)
+	// across all attention sinks
+	int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	int pair_idx = tid * 2;
+	
+	if (pair_idx < kv_dim) {
+		for (int r = 0; r < kv_sink; r++) {
+			float* k = kb + r * kv_dim;
+			rope(k, pair_idx, head_dim, 1, theta, rotary_dim, k);
+		}
+	}
+}
+
 template <typename T>
 void Block::_block_cuda(
-	InferenceState& s, int pos, int kv_pos, int kv_len
+	InferenceState& s, int pos, int kv_sink, int kv_pos, int kv_len
 ) const {
 	const Config& c = *_config;
 	
@@ -567,6 +589,17 @@ void Block::_block_cuda(
 			s.q(),           // Q can be updated in-place
 			kb,
 			vb
+		);
+	}
+	if (kv_sink > 0) {
+		// Sink tokens remain untouched while the rest of the KV cache is incrementally 
+		// replaced in ring order, but sink i must always be positioned (max_seq_len - i)
+		// away from current timestep. Hence, each forward pass, rotate sink tokens 
+		// forward by 1. See https://arxiv.org/abs/2309.17453 for more.
+		int threads_needed = (kv_dim + 1) / 2;  // Each thread handles 2 elements
+    int num_blocks = (threads_needed + max_threads_per_block - 1) / max_threads_per_block;
+		rotate_sink_tokens<<<num_blocks, max_threads_per_block>>>(
+			kb, kv_sink, kv_dim, c.head_dim, c.rope_theta, c.rotary_dim
 		);
 	}
 	
@@ -750,10 +783,10 @@ void ffn_cuda(
   unregister_cuda_host(xout);
 }
 
-template void Block::_block_cuda<float>(InferenceState&, int, int, int) const;
-template void Block::_block_cuda<half>(InferenceState&, int, int, int) const;
-template<> void Block::_block_cuda<f16_t>(InferenceState& s, int pos, int kv_pos, int kv_len) const {
-  _block_cuda<half>(s, pos, kv_pos, kv_len);
+template void Block::_block_cuda<float>(InferenceState&, int, int, int, int) const;
+template void Block::_block_cuda<half>(InferenceState&, int, int, int, int) const;
+template<> void Block::_block_cuda<f16_t>(InferenceState& s, int pos, int kv_sink, int kv_pos, int kv_len) const {
+  _block_cuda<half>(s, pos, kv_sink, kv_pos, kv_len);
 }
 
 void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode) {
@@ -783,13 +816,16 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
     }
   }
 	
-	// TODO: attention sinks
-	int kv_pos = pos % c.max_seq_len;
+	// When decoding past the context length, keep the first few tokens in the KV cache
+  // untouched as "attention sinks" while replacing the rest in ring order.
+  // See StreamingLLM (https://arxiv.org/pdf/2309.17453) for more.
+	int kv_sink = pos >= c.max_seq_len ? KV_SINKS : 0;
+	int kv_pos = kv_sink + (pos - kv_sink) % (c.max_seq_len - kv_sink);
 	int kv_len = pos >= c.max_seq_len ? c.max_seq_len : pos + 1;
 	
 	// forward all layers in order
 	for (auto b : blocks) {
-		b->block(s, pos, kv_pos, kv_len);
+		b->block(s, pos, kv_sink, kv_pos, kv_len);
 	}
 
   if (mode == InferenceMode::HYDRATE_KV_CACHE) {
