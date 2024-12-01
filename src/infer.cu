@@ -84,6 +84,24 @@ extern "C" void set_cuda_device(int device) {
   CUDA_CHECK(cudaDeviceGetAttribute(&max_threads_per_block, cudaDevAttrMaxThreadsPerBlock, device));
 }
 
+__device__ inline float blocktranspose(float v, float def) {
+  // Performs block-and-warp transpose operation:
+  //   For a block containing K warps where lane 0 contains val_k,
+  //   this function returns:
+  //   - For warp 0, lane K: val_k
+  //   - For all other warps and lanes: def
+	int lane = threadIdx.x % warpSize;
+	int warp = threadIdx.x / warpSize;
+
+  // Will hold results of all warps.
+	// Capacity 32 since there can be at most 32 warps in a block.
+	__shared__ float sm[32];
+	if (lane == 0) sm[warp] = v;
+	__syncthreads();
+
+	return lane < blockDim.x / warpSize ? sm[lane] : def;
+}
+
 __device__ 
 inline float warp_reduce_sum(float val) {
   for (int offset = warpSize / 2; offset > 0; offset /= 2)
@@ -108,7 +126,7 @@ inline float block_all_reduce_max(float val) {
 	// All threads will contain the max of all threads in the block.
 	
 	// Will hold results of all warps.
-	// Capacity 32 since there can be at most 32 warps in a thread.
+	// Capacity 32 since there can be at most 32 warps in a block.
   __shared__ float shared[32];
   const int wid  = threadIdx.x / warpSize;
   const int lane = threadIdx.x % warpSize;
@@ -147,7 +165,7 @@ inline float block_all_reduce_sum(float val) {
 	// All threads will contain the sum of all threads in the block.
 	
 	// Will hold results of all warps.
-	// Capacity 32 since there can be at most 32 warps in a thread.
+	// Capacity 32 since there can be at most 32 warps in a block.
   __shared__ float shared[32];
   const int wid  = threadIdx.x / warpSize;
   const int lane = threadIdx.x % warpSize;
@@ -203,6 +221,26 @@ void matmul(const T* A, const float* x, int n, int d, float* out) {
 	float rowSum = matmul_row(&A[n * i], x, offset, n);
 	if (offset == 0) {
 		out[i] = rowSum;
+	}
+}
+
+template <typename T>
+__global__
+void matmul_wide(const T* A, const float* x, int n, int d, float* out) {
+	// A (d,n) @ x (n,) -> out (d,)
+	// PRECOND: Block is 1-D and contains WPB warps.
+	int i = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+	if (i >= d) return;
+	// Warp j computes sum for row at <blockIdx.x*WPB + j>
+  // Lane 0 of each warp will hold result
+	int k = threadIdx.x % warpSize;
+	float rowSum = matmul_row(&A[n * i], x, k, n);
+  // Transpose values so lane k in warp 0 contains row at <blockIdx.x*WPB + k>
+  // For WPB=32, this allows us to coalesce 32 float32 writes into a single 128-byte store
+  rowSum = blocktranspose(rowSum, 1.0);
+	if (threadIdx.x < blockDim.x / warpSize) {
+    int block_start_i = blockIdx.x * blockDim.x / warpSize;
+		out[block_start_i + k] = rowSum;
 	}
 }
 
@@ -870,13 +908,13 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
 	// classifier into logits
 	switch (c.weight_dtype) {
     case DType::F32: {
-	    matmul<<<c.vocab_size, warp_size>>>(
+	    matmul_wide<<<c.vocab_size/32, warp_size*32>>>(
         static_cast<float*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
       );
       break;
     }
     case DType::F16: {
-	    matmul<<<c.vocab_size, warp_size>>>(
+	    matmul_wide<<<c.vocab_size/32, warp_size*32>>>(
         static_cast<half*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
       );
       break;

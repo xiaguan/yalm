@@ -340,6 +340,15 @@ void kernel_bench(const std::string& kernel_name) {
     fill_random(x.data(), x.size(), 1);
     std::vector<float> xout_cuda(hidden_dim);
     matmul_cuda<f16_t>(xout_cuda.data(), x.data(), w.data(), dim, hidden_dim);
+  } else if (kernel_name == "matmul-wide") {
+    int hidden_dim = 32000;
+
+    std::vector<f16_t> w(dim * hidden_dim);
+    fill_random(w.data(), w.size(), 0);
+    std::vector<float> x(dim);
+    fill_random(x.data(), x.size(), 1);
+    std::vector<float> xout_cuda(hidden_dim);
+    matmul_cuda<f16_t>(xout_cuda.data(), x.data(), w.data(), dim, hidden_dim);
   } else if (kernel_name == "mha") {
     std::vector<float> kb(max_seq_len * n_kv_heads * head_dim);
     fill_random(kb.data(), kb.size(), 0);
@@ -389,13 +398,15 @@ int main(int argc, char* argv[]) {
   } else if (argc == 2 && std::string(argv[1]) == "-b2") {
     std::cout << "Running memory benchmark 2" << std::endl;
     mem_bench2();
-  } else if (std::string(argv[1]) == "-bk") {
+  } else if (argc >= 2 && std::string(argv[1]) == "-bk") {
     if (argc != 3) {
       std::cerr << "Usage: " << argv[0] << " -bk <kernel_name>" << std::endl;
       exit(1);
     }
     std::cout << "Running kernel benchmark" << std::endl;
-    kernel_bench(argv[2]);
+    for (int i = 0; i < 10; i++) {
+      kernel_bench(argv[2]);
+    }
   } else {
     test_attn();
     test_cuda_kernels();
