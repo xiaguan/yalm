@@ -248,15 +248,19 @@ template <typename T>
 __global__
 void fused_matmul_add_residuals(const T* A, const float* x, int n, int d, float* out) {
 	// A (d,n) @ x (n,) -> out (d,)
-	// PRECOND: Block is 1-D.
+	// PRECOND: Block is 1-D and contains WPB warps.
 	int i = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
 	if (i >= d) return;
-	// Since block is 1-dimensional, thread ID is same as threadIdx.x,
-	// and warp partitions thread IDs
-	int offset = threadIdx.x % warpSize;
-	float rowSum = matmul_row(&A[n * i], x, offset, n);
-	if (offset == 0) {
-		out[i] += rowSum;
+	// Warp j computes sum for row at <blockIdx.x*WPB + j>
+  // Lane 0 of each warp will hold result
+	int k = threadIdx.x % warpSize;
+	float rowSum = matmul_row(&A[n * i], x, k, n);
+  // Transpose values so lane k in warp 0 contains row at <blockIdx.x*WPB + k>
+  // For WPB=32, this allows us to coalesce 32 float32 writes into a single 128-byte store
+  rowSum = blocktranspose(rowSum, 1.0);
+	if (threadIdx.x < blockDim.x / warpSize) {
+    int block_start_i = blockIdx.x * blockDim.x / warpSize;
+		out[block_start_i + k] += rowSum;
 	}
 }
 
@@ -671,7 +675,7 @@ void Block::_block_cuda(
 	}
 	// final matmul projection and residual back:
 	// x <- wo(...) + x
-	fused_matmul_add_residuals<<<c.dim, warp_size>>>(
+	fused_matmul_add_residuals<<<c.dim/32, warp_size*32>>>(
 		wo<T>(), s.xb2(), q_dim, c.dim, s.x()
 	);
 	
@@ -707,7 +711,7 @@ void Block::_block_cuda(
   }
   
 	// add residual back: x <- w2(...) + x
-  fused_matmul_add_residuals<<<c.dim, warp_size>>>(
+  fused_matmul_add_residuals<<<c.dim/32, warp_size*32>>>(
 		w2<T>(), s.hb(), c.hidden_dim, c.dim, s.x()
 	);
 }
