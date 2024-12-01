@@ -456,19 +456,31 @@ void fused_ffn_w1_w3_glu_act(
 	int hidden_dim,
 	float* out         // (hidden_dim,)
 ) {
-	// Each warp computes one row of both w1(x) and w3(x), then applies GLU
-	int warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
-	if (warp_id >= hidden_dim) return;
+	// Each block computes 32 rows of both w1(x) and w3(x), then applies GLU
+	// Each warp handles one row
+	int start_row = blockIdx.x * 32;
+	int thread_idx = threadIdx.x;
+	int warp = thread_idx / warpSize;
+	int lane = thread_idx % warpSize;
 	
-	int offset = threadIdx.x % warpSize;
-	
-	// Compute w1(x) and w3(x) for this row
-	float sum1 = matmul_row(&w1[dim * warp_id], x, offset, dim);
-	float sum3 = matmul_row(&w3[dim * warp_id], x, offset, dim);
-	
-	// Apply activation and multiply
-	if (offset == 0) {
-		out[warp_id] = act<A>(sum1) * sum3;
+	if (start_row + warp < hidden_dim) {
+		// Compute w1(x) and w3(x) for this row
+		float sum1 = matmul_row(&w1[dim * (start_row + warp)], x, lane, dim);
+		float sum3 = matmul_row(&w3[dim * (start_row + warp)], x, lane, dim);
+		
+		// Apply activation and multiply
+		float result = 0.0f;
+		if (lane == 0) {
+			result = act<A>(sum1) * sum3;
+		}
+		
+		// Transpose result from (warp k, lane 0) to (warp 0, lane k)
+		float coalesced = blocktranspose(result, 0.0f);
+		
+		// Write coalesced result 
+		if (threadIdx.x < blockDim.x / warpSize && start_row + lane < hidden_dim) {
+			out[start_row + lane] = coalesced;
+		}
 	}
 }
 
@@ -694,7 +706,7 @@ void Block::_block_cuda(
   switch (c.act) {
 	  case ActivationType::GELU: {
 			fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
-			  c.hidden_dim, warp_size
+			  c.hidden_dim/32, warp_size*32
 			>>>(
 				w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
 			);
@@ -702,7 +714,7 @@ void Block::_block_cuda(
 	  }
 	  case ActivationType::SILU: {
 		  fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
-			  c.hidden_dim, warp_size
+			  c.hidden_dim/32, warp_size*32
 			>>>(
 				w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
 			);
@@ -811,7 +823,7 @@ void ffn_cuda(
   switch (act) {
 	  case ActivationType::GELU: {
 			fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
-			  hidden_dim, warp_size
+			  hidden_dim/32, warp_size*32
 			>>>(
 				w1, w3, x, dim, hidden_dim, hb
 			);
@@ -819,7 +831,7 @@ void ffn_cuda(
 	  }
 	  case ActivationType::SILU: {
 		  fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
-			  hidden_dim, warp_size
+			  hidden_dim/32, warp_size*32
 			>>>(
 				w1, w3, x, dim, hidden_dim, hb
 			);
