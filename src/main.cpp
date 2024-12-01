@@ -19,6 +19,7 @@ void error_usage() {
 	fprintf(stderr, "Options:\n");
   fprintf(stderr, "  -d [cpu,cuda] which device to use (default - cuda)\n");
   fprintf(stderr, "  -m [completion,perplexity] which mode to run in (default - completion)\n");
+  fprintf(stderr, "  -T <int> sliding window context length (0 - max)\n");
   fprintf(stderr, "  Choose one:\n");
 	fprintf(stderr, "    -i <string> input prompt\n");
   fprintf(stderr, "    -f <filepath> input file with prompt\n");
@@ -35,6 +36,7 @@ int main(int argc, char* argv[]) {
   std::string mode = "completion";     // completion or perplexity
   std::string prompt = "";             // prompt string
   std::string prompt_path = "";        // prompt file path
+  int context = 0;
   // Completion mode options
   int num_steps = 256;                 // number of steps to run for
 
@@ -94,6 +96,12 @@ int main(int argc, char* argv[]) {
       }
       prompt_path = argv[i + 1];
       i += 2;
+    } else if (argv[i][1] == 'T') {
+      if (i + 1 >= argc) {
+        error_usage();
+      }
+      context = std::stoi(argv[i + 1]);
+      i += 2;
     } else if (argv[i][1] == 'n') {
       if (i + 1 >= argc) {
         error_usage();
@@ -122,7 +130,7 @@ int main(int argc, char* argv[]) {
 
   YALMData model_data;
   model_data.from_file(checkpoint_path);
-  Model model(model_data);
+  Model model(model_data, context);
   InferenceState state(model.config);
   Sampler sampler(model.config);
   Tokenizer tokenizer(model_data);

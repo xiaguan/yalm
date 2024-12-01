@@ -311,9 +311,9 @@ void InferenceState::cuda() {
   register_cuda_host(_logits, _config->vocab_size * sizeof(float));
 }
 
-Model::Model(YALMData& yalm) {
+Model::Model(YALMData& yalm, int context) {
   config = std::make_shared<Config>();
-  config->from_yalm(yalm);
+  config->from_yalm(yalm, context);
   std::cout << "loading model with dtype: " << dtype_to_string(config->weight_dtype) << std::endl;
 
   token_embedding_table = check_tensor(

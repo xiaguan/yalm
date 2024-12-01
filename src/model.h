@@ -205,7 +205,7 @@ struct Model {
 	// classifier weights for the logits, on the last layer
 	void* wcls = nullptr; // (vocab_size, dim)
 
-  Model(YALMData& yalm);
+  Model(YALMData& yalm, int context = 0);
   
   void forward(InferenceState& s, int token, int pos, InferenceMode mode = InferenceMode::OUTPUT_LOGITS);
   void cuda();
