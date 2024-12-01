@@ -389,7 +389,7 @@ int main(int argc, char* argv[]) {
   } else if (argc == 2 && std::string(argv[1]) == "-b2") {
     std::cout << "Running memory benchmark 2" << std::endl;
     mem_bench2();
-  } else if (std::string(argv[1]) == "-bk") {
+  } else if (argc >= 2 && std::string(argv[1]) == "-bk") {
     if (argc != 3) {
       std::cerr << "Usage: " << argv[0] << " -bk <kernel_name>" << std::endl;
       exit(1);
