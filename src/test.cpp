@@ -5,6 +5,8 @@
 #include <thread>
 #include <vector>
 
+#include "immintrin.h"
+
 #include "model.h"
 #include "time.h"
 
@@ -116,6 +118,18 @@ void fill_random(float* data, size_t N, unsigned long seed, float scale_factor =
   for (size_t i = 0; i < N; i++) {
     data[i] = dist(gen) * scale_factor;
   }
+}
+
+void fill_random(f16_t* data, size_t N, unsigned long seed, float scale_factor = 1.0) {
+#if defined(__AVX2__) && defined(__F16C__)
+  std::default_random_engine gen(seed);
+  std::normal_distribution<float> dist(0.0, 1.0);
+  for (size_t i = 0; i < N; i++) {
+    data[i] = _cvtss_sh(dist(gen) * scale_factor, 0);
+  }
+#else
+  assert(false && "Cannot fill_random due to missing F16C extensions");
+#endif
 }
 
 void test_cuda_kernels() {
@@ -310,6 +324,64 @@ void mem_bench2() {
   std::cout << "Memory bandwidth: " << mb_per_s << " MB/s" << std::endl;
 }
 
+void kernel_bench(const std::string& kernel_name) {
+  int head_dim = 128;
+  int n_heads = 32;
+  int dim = head_dim * n_heads;
+  int hidden_dim = 14336;
+  int n_kv_heads = 8;
+  int max_seq_len = 4096;
+  int kv_len = 4096;
+
+  if (kernel_name == "matmul") {
+    std::vector<f16_t> w(dim * hidden_dim);
+    fill_random(w.data(), w.size(), 0);
+    std::vector<float> x(dim);
+    fill_random(x.data(), x.size(), 1);
+    std::vector<float> xout_cuda(hidden_dim);
+    matmul_cuda<f16_t>(xout_cuda.data(), x.data(), w.data(), dim, hidden_dim);
+  } else if (kernel_name == "mha") {
+    std::vector<float> kb(max_seq_len * n_kv_heads * head_dim);
+    fill_random(kb.data(), kb.size(), 0);
+    std::vector<float> vb(max_seq_len * n_kv_heads * head_dim);
+    fill_random(vb.data(), vb.size(), 1);
+    std::vector<float> q(n_heads * head_dim);
+    fill_random(q.data(), q.size(), 2);
+    std::vector<float> att_cuda(n_heads * max_seq_len);
+    std::vector<float> xout_cuda(n_heads * head_dim);
+    mha_cuda(
+      xout_cuda.data(), 
+      att_cuda.data(),
+      kb.data(), 
+      vb.data(), 
+      q.data(), 
+      head_dim, kv_len, max_seq_len, n_heads, n_kv_heads
+    );
+  } else if (kernel_name == "ffn") {
+    std::vector<float> x(dim);
+    fill_random(x.data(), x.size(), 0);
+    std::vector<float> w1(dim * hidden_dim);
+    fill_random(w1.data(), w1.size(), 1, 1.0 / sqrtf(dim)); 
+    std::vector<float> w2(hidden_dim * dim);
+    fill_random(w2.data(), w2.size(), 2, 1.0 / sqrtf(hidden_dim));
+    std::vector<float> w3(dim * hidden_dim);
+    fill_random(w3.data(), w3.size(), 3, 1.0 / sqrtf(dim));
+    std::vector<float> xout_cuda(dim);
+    ffn_cuda(
+      xout_cuda.data(), 
+      x.data(), 
+      w1.data(), 
+      w2.data(), 
+      w3.data(), 
+      hidden_dim, dim, 
+      ActivationType::GELU
+    );
+  } else {
+    std::cerr << "Unknown kernel: " << kernel_name << std::endl;
+    exit(1);
+  }
+}
+
 int main(int argc, char* argv[]) {
   if (argc == 2 && std::string(argv[1]) == "-b") {
     std::cout << "Running memory benchmark" << std::endl;
@@ -317,6 +389,13 @@ int main(int argc, char* argv[]) {
   } else if (argc == 2 && std::string(argv[1]) == "-b2") {
     std::cout << "Running memory benchmark 2" << std::endl;
     mem_bench2();
+  } else if (std::string(argv[1]) == "-bk") {
+    if (argc != 3) {
+      std::cerr << "Usage: " << argv[0] << " -bk <kernel_name>" << std::endl;
+      exit(1);
+    }
+    std::cout << "Running kernel benchmark" << std::endl;
+    kernel_bench(argv[2]);
   } else {
     test_attn();
     test_cuda_kernels();

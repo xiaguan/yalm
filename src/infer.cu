@@ -185,7 +185,7 @@ inline float matmul_row(const half* row, const float* x, int offset, int dim) {
 	float sum = 0.0;
 	for (int j = offset; j < dim; j += warpSize) {
 		float v = __half2float(row[j]) * x[j];
-		sum += v;
+    sum += v;
 	}
 	return warp_reduce_sum(sum);
 }
@@ -723,18 +723,25 @@ void mha_cuda(
   unregister_cuda_host(att);
 }
 
-void matmul_cuda(float* xout, float* x, float* w, int n, int d) {
+template <typename T>
+void matmul_cuda(float* xout, float* x, T* w, int n, int d) {
   int warp_size = 32;
   // A (d,n) @ x (n,) -> out (d,)
 
   // all cuda uploads leak forever...
   register_cuda_host(xout, d * sizeof(float));
   x = static_cast<float*>(upload_cuda(x, n * sizeof(float)));
-  w = static_cast<float*>(upload_cuda(w, n * d * sizeof(float)));
+  w = static_cast<T*>(upload_cuda(w, n * d * sizeof(T)));
   matmul<<<d, warp_size>>>(w, x, n, d, xout);
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
 	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
   unregister_cuda_host(xout);
+}
+
+template void matmul_cuda<float>(float*, float*, float*, int, int);
+template void matmul_cuda<half>(float*, float*, half*, int, int);
+template<> void matmul_cuda<f16_t>(float* xout, float* x, f16_t* w, int n, int d) {
+  matmul_cuda<half>(xout, x, (half*)w, n, d);
 }
 
 void ffn_cuda(

@@ -256,7 +256,8 @@ void mha_cuda(
 
 void matmul_cpu(float* xout, float* x, float* w, int n, int d);
 void matmul_cpu(float* xout, float* x, f16_t* w, int n, int d);
-void matmul_cuda(float* xout, float* x, float* w, int n, int d);
+template <typename T>
+void matmul_cuda(float* xout, float* x, T* w, int n, int d);
 
 void ffn_cpu(
   float* xout, float* x, 
