@@ -744,9 +744,10 @@ template<> void matmul_cuda<f16_t>(float* xout, float* x, f16_t* w, int n, int d
   matmul_cuda<half>(xout, x, (half*)w, n, d);
 }
 
+template <typename T>
 void ffn_cuda(
   float* xout, float* x, 
-  float* w1, float* w2, float* w3, 
+  T* w1, T* w2, T* w3, 
   int hidden_dim, int dim,
   ActivationType act
 ) {
@@ -754,9 +755,9 @@ void ffn_cuda(
   // all cuda uploads leak forever...
   register_cuda_host(xout, dim * sizeof(float));
   x = static_cast<float*>(upload_cuda(x, dim * sizeof(float)));
-  w1 = static_cast<float*>(upload_cuda(w1, hidden_dim * dim * sizeof(float)));
-  w2 = static_cast<float*>(upload_cuda(w2, dim * hidden_dim * sizeof(float)));
-  w3 = static_cast<float*>(upload_cuda(w3, hidden_dim * dim * sizeof(float)));
+  w1 = static_cast<T*>(upload_cuda(w1, hidden_dim * dim * sizeof(T)));
+  w2 = static_cast<T*>(upload_cuda(w2, dim * hidden_dim * sizeof(T)));
+  w3 = static_cast<T*>(upload_cuda(w3, hidden_dim * dim * sizeof(T)));
   float* hb = new float[hidden_dim];
   float* hb2 = new float[hidden_dim];
   hb = static_cast<float*>(upload_cuda(hb, hidden_dim * sizeof(float)));
@@ -767,7 +768,7 @@ void ffn_cuda(
   // Note this is a feedforward with a GLU, not a simple MLP.
   switch (act) {
 	  case ActivationType::GELU: {
-			fused_ffn_w1_w3_glu_act<float, ActivationType::GELU><<<
+			fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
 			  hidden_dim, warp_size
 			>>>(
 				w1, w3, x, dim, hidden_dim, hb
@@ -775,7 +776,7 @@ void ffn_cuda(
 		  break;
 	  }
 	  case ActivationType::SILU: {
-		  fused_ffn_w1_w3_glu_act<float, ActivationType::SILU><<<
+		  fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
 			  hidden_dim, warp_size
 			>>>(
 				w1, w3, x, dim, hidden_dim, hb
@@ -788,6 +789,21 @@ void ffn_cuda(
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
 	CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
   unregister_cuda_host(xout);
+}
+
+template void ffn_cuda<float>(float*, float*, float*, float*, float*, int, int, ActivationType);
+template void ffn_cuda<half>(float*, float*, half*, half*, half*, int, int, ActivationType);
+template <> void ffn_cuda<f16_t>(
+  float* xout, float* x, 
+  f16_t* w1, f16_t* w2, f16_t* w3, 
+  int hidden_dim, int dim,
+  ActivationType act
+) {
+  ffn_cuda<half>(
+    xout, x, 
+    (half*)w1, (half*)w2, (half*)w3, 
+    hidden_dim, dim, act
+  );
 }
 
 template void Block::_block_cuda<float>(InferenceState&, int, int, int, int) const;

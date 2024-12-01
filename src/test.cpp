@@ -360,14 +360,14 @@ void kernel_bench(const std::string& kernel_name) {
   } else if (kernel_name == "ffn") {
     std::vector<float> x(dim);
     fill_random(x.data(), x.size(), 0);
-    std::vector<float> w1(dim * hidden_dim);
+    std::vector<f16_t> w1(dim * hidden_dim);
     fill_random(w1.data(), w1.size(), 1, 1.0 / sqrtf(dim)); 
-    std::vector<float> w2(hidden_dim * dim);
+    std::vector<f16_t> w2(hidden_dim * dim);
     fill_random(w2.data(), w2.size(), 2, 1.0 / sqrtf(hidden_dim));
-    std::vector<float> w3(dim * hidden_dim);
+    std::vector<f16_t> w3(dim * hidden_dim);
     fill_random(w3.data(), w3.size(), 3, 1.0 / sqrtf(dim));
     std::vector<float> xout_cuda(dim);
-    ffn_cuda(
+    ffn_cuda<f16_t>(
       xout_cuda.data(), 
       x.data(), 
       w1.data(), 

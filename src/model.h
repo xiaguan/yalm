@@ -265,9 +265,10 @@ void ffn_cpu(
   int hidden_dim, int dim,
   ActivationType act
 );
+template <typename T>
 void ffn_cuda(
   float* xout, float* x, 
-  float* w1, float* w2, float* w3, 
+  T* w1, T* w2, T* w3, 
   int hidden_dim, int dim,
   ActivationType act
 );
