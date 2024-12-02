@@ -135,6 +135,8 @@ int main(int argc, char* argv[]) {
   Sampler sampler(model.config);
   Tokenizer tokenizer(model_data);
 
+  std::cout << "Model active bytes with full context window: " << model.config->active_bytes(model.config->max_seq_len) << std::endl;
+
   if (num_steps == 0) {
     // `-n 0` means use the full context length
     num_steps = model.config->max_seq_len;
