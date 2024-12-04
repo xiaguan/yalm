@@ -174,23 +174,23 @@ private:
   Device _device = Device::CPU;
 
   // weights for norms
-	float* _rms_att_weight = nullptr; // (dim) rmsnorm weights
-	float* _rms_ffn_weight = nullptr; // (dim)
+  float* _rms_att_weight = nullptr; // (dim) rmsnorm weights
+  float* _rms_ffn_weight = nullptr; // (dim)
 
   // weights for self-attention matmuls
-	void* _wq = nullptr; // (n_heads * head_dim, dim)
-	void* _wk = nullptr; // (n_kv_heads * head_dim, dim)
-	void* _wv = nullptr; // (n_kv_heads * head_dim, dim)
-	void* _wo = nullptr; // (dim, n_heads * head_dim)
-	
+  void* _wq = nullptr; // (n_heads * head_dim, dim)
+  void* _wk = nullptr; // (n_kv_heads * head_dim, dim)
+  void* _wv = nullptr; // (n_kv_heads * head_dim, dim)
+  void* _wo = nullptr; // (dim, n_heads * head_dim)
+  
   // weights for ffn
-	void* _w1 = nullptr; // (n_experts?, hidden_dim, dim)
-	void* _w2 = nullptr; // (n_experts?, dim, hidden_dim)
-	void* _w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
+  void* _w1 = nullptr; // (n_experts?, hidden_dim, dim)
+  void* _w2 = nullptr; // (n_experts?, dim, hidden_dim)
+  void* _w3 = nullptr; // (n_experts?, hidden_dim, dim) - GLU weights
 
   // kv cache
-	float* _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
-	float* _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
+  float* _key_cache = nullptr;   // (seq_len, n_kv_heads * head_dim)
+  float* _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
 };
 
 enum class InferenceMode {
@@ -204,11 +204,11 @@ struct Model {
   std::vector<std::shared_ptr<Block>> blocks;
   
   // token embedding table
-	void* token_embedding_table = nullptr; // (vocab_size, dim)
+  void* token_embedding_table = nullptr; // (vocab_size, dim)
   // final norm
-	float* rms_final_weight = nullptr; // (dim,)
-	// classifier weights for the logits, on the last layer
-	void* wcls = nullptr; // (vocab_size, dim)
+  float* rms_final_weight = nullptr; // (dim,)
+  // classifier weights for the logits, on the last layer
+  void* wcls = nullptr; // (vocab_size, dim)
 
   Model(YALMData& yalm, int context = 0);
   

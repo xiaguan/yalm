@@ -15,22 +15,22 @@
 #include "tokenizer.h"
 
 void error_usage() {
-	fprintf(stderr, "Usage:   main <checkpoint> [options]\n");
-	fprintf(stderr, "Example: main model.yalm -i \"Q: What is the meaning of life?\"\n");
-	fprintf(stderr, "Options:\n");
+  fprintf(stderr, "Usage:   main <checkpoint> [options]\n");
+  fprintf(stderr, "Example: main model.yalm -i \"Q: What is the meaning of life?\"\n");
+  fprintf(stderr, "Options:\n");
   fprintf(stderr, "  -h Display this help message\n");
   fprintf(stderr, "  -d [cpu,cuda] which device to use (default - cuda)\n");
   fprintf(stderr, "  -m [completion,passkey,perplexity] which mode to run in (default - completion)\n");
   fprintf(stderr, "  -T <int> sliding window context length (0 - max)\n");
   fprintf(stderr, "  Choose one:\n");
-	fprintf(stderr, "    -i <string> input prompt\n");
+  fprintf(stderr, "    -i <string> input prompt\n");
   fprintf(stderr, "    -f <filepath> input file with prompt\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "Completion mode options:\n");
   fprintf(stderr, "  -n <int>    number of steps to run for in completion mode, default 256. 0 = max_seq_len, -1 = infinite\n");
   fprintf(stderr, "Passkey mode options:\n");
   fprintf(stderr, "  -n <int>    number of junk lines to insert (default - 250)\n");
-	exit(1);
+  exit(1);
 }
 
 void run_completion(
@@ -324,25 +324,25 @@ int main(int argc, char* argv[]) {
   // Passkey mode options
   int n_junk = 250;                   // number of junk lines to insert
 
-	if (argc >= 2) {
-		checkpoint_path = argv[1];
-	} else {
-		error_usage();
-	}
-	for (int i = 2; i < argc;) {
-		// do some basic validation
-		if (i + 1 >= argc) {
-			error_usage();
-		} // must have arg after flag
-		if (argv[i][0] != '-') {
-			error_usage();
-		} // must start with dash
-		if (strlen(argv[i]) != 2) {
-			error_usage();
-		} // must be -x (one dash, one letter)
+  if (argc >= 2) {
+    checkpoint_path = argv[1];
+  } else {
+    error_usage();
+  }
+  for (int i = 2; i < argc;) {
+    // do some basic validation
+    if (i + 1 >= argc) {
+      error_usage();
+    } // must have arg after flag
+    if (argv[i][0] != '-') {
+      error_usage();
+    } // must start with dash
+    if (strlen(argv[i]) != 2) {
+      error_usage();
+    } // must be -x (one dash, one letter)
 
-		// read in the args
-		if (argv[i][1] == 'h') {
+    // read in the args
+    if (argv[i][1] == 'h') {
       error_usage();
     } else if (argv[i][1] == 'm') {
       if (i + 1 >= argc) {
@@ -378,7 +378,7 @@ int main(int argc, char* argv[]) {
       }
       prompt = argv[i + 1];
       i += 2;
-		} else if (argv[i][1] == 'f') {
+    } else if (argv[i][1] == 'f') {
       if (i + 1 >= argc) {
         error_usage();
       }
@@ -398,9 +398,9 @@ int main(int argc, char* argv[]) {
       n_junk = num_steps;
       i += 2;
     } else {
-			error_usage();
-		}
-	}
+      error_usage();
+    }
+  }
   int has_prompt = prompt.size() > 0 ? 1 : 0;
   int has_prompt_path = prompt_path.size() > 0 ? 1 : 0;
   if (mode == "completion" || mode == "perplexity") {
