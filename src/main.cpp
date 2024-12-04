@@ -22,14 +22,19 @@ void error_usage() {
   fprintf(stderr, "  -d [cpu,cuda] which device to use (default - cuda)\n");
   fprintf(stderr, "  -m [completion,passkey,perplexity] which mode to run in (default - completion)\n");
   fprintf(stderr, "  -T <int> sliding window context length (0 - max)\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Perplexity mode options:\n");
   fprintf(stderr, "  Choose one:\n");
   fprintf(stderr, "    -i <string> input prompt\n");
   fprintf(stderr, "    -f <filepath> input file with prompt\n");
-  fprintf(stderr, "\n");
   fprintf(stderr, "Completion mode options:\n");
   fprintf(stderr, "  -n <int>    number of steps to run for in completion mode, default 256. 0 = max_seq_len, -1 = infinite\n");
+  fprintf(stderr, "  Choose one:\n");
+  fprintf(stderr, "    -i <string> input prompt\n");
+  fprintf(stderr, "    -f <filepath> input file with prompt\n");
   fprintf(stderr, "Passkey mode options:\n");
   fprintf(stderr, "  -n <int>    number of junk lines to insert (default - 250)\n");
+  fprintf(stderr, "  -l <int>    passkey position (-1 - random)\n");
   exit(1);
 }
 
@@ -219,7 +224,8 @@ void run_passkey(
   const std::string& checkpoint_path,
   const std::string& device,
   const int context,
-  const int n_junk
+  const int n_junk,
+  const int passkey_pos
 ) {
   YALMData model_data;
   model_data.from_file(checkpoint_path);
@@ -248,7 +254,7 @@ void run_passkey(
   const std::string PROMPT_SUFFIX = " What is the pass key? The pass key is";
 
   const int passkey = std::rand() % 50000 + 1;
-  const int pos = std::rand() % n_junk;
+  const int pos = passkey_pos == -1 ? std::rand() % n_junk : passkey_pos;
 
   std::string prompt = PROMPT_PREFIX;
   for (int i = 0; i < n_junk; i++) {
@@ -323,6 +329,7 @@ int main(int argc, char* argv[]) {
   int num_steps = 256;                 // number of steps to run for
   // Passkey mode options
   int n_junk = 250;                   // number of junk lines to insert
+  int passkey_pos = -1;                 // passkey position (-1 - random)
 
   if (argc >= 2) {
     checkpoint_path = argv[1];
@@ -390,6 +397,12 @@ int main(int argc, char* argv[]) {
       }
       context = std::stoi(argv[i + 1]);
       i += 2;
+    } else if (argv[i][1] == 'l') {
+      if (i + 1 >= argc) {
+        error_usage();
+      }
+      passkey_pos = std::stoi(argv[i + 1]);
+      i += 2;
     } else if (argv[i][1] == 'n') {
       if (i + 1 >= argc) {
         error_usage();
@@ -417,12 +430,17 @@ int main(int argc, char* argv[]) {
       buffer << file.rdbuf();
       prompt = buffer.str();
     }
+  } else {
+    if (passkey_pos != -1 && (passkey_pos >= n_junk || passkey_pos < 0)) {
+      std::cerr << "Error: passkey position must be between 0 and " << n_junk - 1 << std::endl;
+      return 1;
+    }
   }
 
   if (mode == "completion") {
     run_completion(checkpoint_path, device, prompt, context, num_steps);
   } else if (mode == "passkey") {
-    run_passkey(checkpoint_path, device, context, n_junk);
+    run_passkey(checkpoint_path, device, context, n_junk, passkey_pos);
   } else if (mode == "perplexity") {
     run_perplexity(checkpoint_path, device, prompt, context);
   }
