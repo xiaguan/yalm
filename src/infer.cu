@@ -398,7 +398,7 @@ void att_mix(
   int max_seq_len, 
   float* out // (n_heads, head_dim)
 ) {
-  // PRECOND: blocks are 1-D and `out` has been zeroed
+  // PRECOND: blocks are 2-D (warp_size, t_stride)
   int h = blockIdx.x;
   int group_size = n_heads / n_kv_heads;
   int g = h / group_size;
@@ -408,16 +408,27 @@ void att_mix(
   const float* vh = vb + head_dim * g;
   float* outh = out + head_dim * h;
   
-  int t_per_thread = seq_len / gridDim.y;
-  int t_start = blockIdx.y * t_per_thread;
-  int t_end = min(t_start + t_per_thread, seq_len);
+  int warp_id = threadIdx.y;
+  int t_stride = blockDim.y;
   
-  for (int i = threadIdx.x; i < head_dim; i += blockDim.x) {
+  // Capacity 32 since there can be at most 32 warps in a block.
+  __shared__ float shared[32];
+  
+  for (int i = threadIdx.x; i < head_dim; i += warpSize) {
+    if (warp_id == 0) {
+      shared[threadIdx.x] = 0;
+    }
+    __syncthreads();
     float sum = 0.0;
-    for (int t = t_start; t < t_end; t++) {
+    for (int t = warp_id; t < seq_len; t += t_stride) {
       sum += vh[kv_stride * t + i] * atth[t];	
     }
-    atomicAdd(&outh[i], sum);
+    atomicAdd(&shared[threadIdx.x], sum);
+    __syncthreads();
+    if (warp_id == 0) {
+      outh[i] = shared[threadIdx.x];
+      shared[threadIdx.x] = 0;
+    }
   }
 }
 
@@ -692,13 +703,11 @@ void Block::_block_cuda(
   }
   // multihead attention: mix values with attention scores
   {
-    int t_per_thread = 256;
     dim3 tpb;
-    tpb.x = warp_size * 16;
+    tpb.x = warp_size;
+    tpb.y = min(kv_len, max_threads_per_block / warp_size);
     dim3 blocks;
     blocks.x = c.n_heads;
-    blocks.y = (kv_len + t_per_thread - 1) / t_per_thread;
-    cudaMemset(s.xb2(), 0, c.n_heads * c.head_dim * sizeof(float));
     att_mix<<<blocks, tpb>>>(
       vb, s.att(),
       c.head_dim, c.n_heads, c.n_kv_heads, 
@@ -758,6 +767,7 @@ void mha_cuda(
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
   int warp_size = 32;
+  int max_threads_per_block = 1024;
   // all cuda uploads leak forever...
   register_cuda_host(xout, n_heads * head_dim * sizeof(float));
   register_cuda_host(att, n_heads * max_seq_len * sizeof(float));
@@ -781,13 +791,11 @@ void mha_cuda(
   }
   // multihead attention: mix values with attention scores
   {
-    int t_per_thread = 256;
     dim3 tpb;
-    tpb.x = warp_size * 16;
+    tpb.x = warp_size;
+    tpb.y = min(kv_len, max_threads_per_block / warp_size);
     dim3 blocks;
     blocks.x = n_heads;
-    blocks.y = (kv_len + t_per_thread - 1) / t_per_thread;
-    cudaMemset(xout, 0, n_heads * head_dim * sizeof(float));
     att_mix<<<blocks, tpb>>>(
       vb, att,
       head_dim, n_heads, n_kv_heads, 
