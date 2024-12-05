@@ -137,9 +137,9 @@ void test_cuda_kernels() {
   int n_heads = 16;
   int dim = head_dim * n_heads;
   int hidden_dim = dim;
-  // int n_kv_heads = 8;
-  // int max_seq_len = 4;
-  // int kv_len = 4;
+  int n_kv_heads = 8;
+  int max_seq_len = 4;
+  int kv_len = 4;
 
   // matmul
   {
@@ -156,13 +156,6 @@ void test_cuda_kernels() {
 
   // mha
   {
-    int head_dim = 128;
-    int n_heads = 32;
-    // int dim = head_dim * n_heads;
-    // int hidden_dim = 14336;
-    int n_kv_heads = 8;
-    int max_seq_len = 4096;
-    int kv_len = 1024;
     std::vector<float> kb(max_seq_len * n_kv_heads * head_dim);
     fill_random(kb.data(), kb.size(), 0);
     std::vector<float> vb(max_seq_len * n_kv_heads * head_dim);
