@@ -399,6 +399,7 @@ void att_mix(
   float* out // (n_heads, head_dim)
 ) {
   // PRECOND: blocks are 2-D (warp_size, t_stride)
+  // Each block computes a single value head.
   int h = blockIdx.x;
   int group_size = n_heads / n_kv_heads;
   int g = h / group_size;
@@ -411,23 +412,31 @@ void att_mix(
   int warp_id = threadIdx.y;
   int t_stride = blockDim.y;
   
+  // Accumulators for head elements.
   // Capacity 32 since there can be at most 32 warps in a block.
-  __shared__ float shared[32];
+  __shared__ float acc[32];
+  // Shared cache for atth values.
+  // Scores will be loaded in chunks of 32 timesteps.
+  __shared__ float atth_cache[32];
   
   for (int i = threadIdx.x; i < head_dim; i += warpSize) {
     if (warp_id == 0) {
-      shared[threadIdx.x] = 0;
+      acc[threadIdx.x] = 0;
     }
     __syncthreads();
     float sum = 0.0;
     for (int t = warp_id; t < seq_len; t += t_stride) {
-      sum += vh[kv_stride * t + i] * atth[t];	
+      if (warp_id == 0) {
+        atth_cache[threadIdx.x] = atth[t + threadIdx.x];
+      }
+      __syncthreads();
+      sum += vh[kv_stride * t + i] * atth_cache[warp_id];
     }
-    atomicAdd(&shared[threadIdx.x], sum);
+    atomicAdd(&acc[threadIdx.x], sum);
     __syncthreads();
     if (warp_id == 0) {
-      outh[i] = shared[threadIdx.x];
-      shared[threadIdx.x] = 0;
+      outh[i] = acc[threadIdx.x];
+      acc[threadIdx.x] = 0;
     }
   }
 }
