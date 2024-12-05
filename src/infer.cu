@@ -383,24 +383,27 @@ void att_mix(
   int max_seq_len, 
   float* out // (n_heads, head_dim)
 ) {
-  // PRECOND: blocks are 1-D and blockDim.x == warpSize
+  // PRECOND: blocks are 1-D
   int h = blockIdx.x;
   int group_size = n_heads / n_kv_heads;
   int g = h / group_size;
-  int i = blockIdx.y;
-  int offset = threadIdx.x;
   int kv_stride = n_kv_heads * head_dim;
   
   const float* atth = att + max_seq_len * h;
   const float* vh = vb + head_dim * g;
   float* outh = out + head_dim * h;
   
-  float sum = 0.0;
-  for (int t = offset; t < seq_len; t += warpSize) {
-    sum += vh[kv_stride * t + i] * atth[t];
+  int t_per_thread = seq_len / gridDim.y;
+  int t_start = blockIdx.y * t_per_thread;
+  int t_end = min(t_start + t_per_thread, seq_len);
+  
+  for (int i = threadIdx.x; i < head_dim; i += blockDim.x) {
+    float sum = 0.0;
+    for (int t = t_start; t < t_end; t++) {
+      sum += vh[kv_stride * t + i] * atth[t];	
+    }
+    atomicAdd(&outh[i], sum);
   }
-  sum = warp_reduce_sum(sum);
-  if (offset == 0) outh[i] = sum;
 }
 
 __global__
@@ -674,11 +677,12 @@ void Block::_block_cuda(
   }
   // multihead attention: mix values with attention scores
   {
+    int t_per_thread = 256;
     dim3 tpb;
-    tpb.x = warp_size;
+    tpb.x = warp_size * 16;
     dim3 blocks;
     blocks.x = c.n_heads;
-    blocks.y = c.head_dim;
+    blocks.y = (kv_len + t_per_thread - 1) / t_per_thread;
     att_mix<<<blocks, tpb>>>(
       vb, s.att(),
       c.head_dim, c.n_heads, c.n_kv_heads, 
@@ -760,11 +764,12 @@ void mha_cuda(
   }
   // multihead attention: mix values with attention scores
   {
+    int t_per_thread = 256;
     dim3 tpb;
-    tpb.x = warp_size;
+    tpb.x = warp_size * 16;
     dim3 blocks;
     blocks.x = n_heads;
-    blocks.y = head_dim;
+    blocks.y = (kv_len + t_per_thread - 1) / t_per_thread;
     att_mix<<<blocks, tpb>>>(
       vb, att,
       head_dim, n_heads, n_kv_heads, 
