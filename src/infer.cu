@@ -383,7 +383,7 @@ void att_mix(
   int max_seq_len, 
   float* out // (n_heads, head_dim)
 ) {
-  // PRECOND: blocks are 1-D
+  // PRECOND: blocks are 1-D and `out` has been zeroed
   int h = blockIdx.x;
   int group_size = n_heads / n_kv_heads;
   int g = h / group_size;
@@ -683,12 +683,14 @@ void Block::_block_cuda(
     dim3 blocks;
     blocks.x = c.n_heads;
     blocks.y = (kv_len + t_per_thread - 1) / t_per_thread;
+    cudaMemset(s.xb2(), 0, c.n_heads * c.head_dim * sizeof(float));
     att_mix<<<blocks, tpb>>>(
       vb, s.att(),
       c.head_dim, c.n_heads, c.n_kv_heads, 
       kv_len, c.max_seq_len, s.xb2()
     );
   }
+
   // final matmul projection and residual back:
   // x <- wo(...) + x
   fused_matmul_add_residuals<<<c.dim/32, warp_size*32>>>(
@@ -770,6 +772,7 @@ void mha_cuda(
     dim3 blocks;
     blocks.x = n_heads;
     blocks.y = (kv_len + t_per_thread - 1) / t_per_thread;
+    cudaMemset(xout, 0, n_heads * head_dim * sizeof(float));
     att_mix<<<blocks, tpb>>>(
       vb, att,
       head_dim, n_heads, n_kv_heads, 
