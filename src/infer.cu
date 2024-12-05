@@ -84,6 +84,21 @@ extern "C" void set_cuda_device(int device) {
   CUDA_CHECK(cudaDeviceGetAttribute(&max_threads_per_block, cudaDevAttrMaxThreadsPerBlock, device));
 }
 
+#if DEBUG_MODEL
+static std::map<std::string, std::vector<float>> _debug_map;
+std::map<std::string, std::vector<float>>& debug_map_cuda() {
+  return _debug_map;
+}
+std::vector<float> copy_debug_tensor(float* device, size_t numel) {
+  float* host = (float*)cuda_hostcopy(device, numel * sizeof(float));
+  std::vector<float> fv(host, host + numel);
+  return fv;
+}
+void save_debug_tensor(const std::string& name, float* x, size_t size) {
+  _debug_map[name] = copy_debug_tensor(x, size);
+}
+#endif
+
 __device__ inline float blocktranspose(float v, float def) {
   // Performs block-and-warp transpose operation:
   //   For a block containing K warps where lane 0 contains val_k,

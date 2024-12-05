@@ -7,6 +7,23 @@
 #include "immintrin.h"
 #include "f16cintrin.h"
 
+#if DEBUG_MODEL
+static std::map<std::string, std::vector<float>> _debug_map;
+std::map<std::string, std::vector<float>>& debug_map_cpu() {
+  return _debug_map;
+}
+std::vector<float> copy_debug_tensor(float* x, size_t size) {
+  std::vector<float> out(size);
+  for (size_t i = 0; i < size; i++) {
+    out[i] = x[i];
+  }
+  return out;
+}
+void save_debug_tensor(const std::string& name, float* x, size_t size) {
+  _debug_map[name] = copy_debug_tensor(x, size);
+}
+#endif
+
 static void matmul(float* xout, float* x, float* w, int n, int d) {
   // W (d,n) @ x (n,) -> xout (d,)
   int i;

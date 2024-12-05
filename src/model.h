@@ -4,6 +4,9 @@
 
 #include <memory>
 #include <vector>
+#include <map>
+
+#define DEBUG_MODEL 0
 
 constexpr int KV_SINKS = 2;
 
@@ -106,6 +109,7 @@ private:
 /* Transformer Block */
 struct Block {
   Block(
+    int layer_i,
     const std::shared_ptr<Config> config,
     const Tensor* rms_att_weight,
     const Tensor* rms_ffn_weight,
@@ -170,6 +174,10 @@ private:
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
 
+#if DEBUG_MODEL
+  int _layer_i = 0;
+#endif
+
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
 
@@ -222,6 +230,11 @@ private:
 
   Device _device = Device::CPU;
 };
+
+#if DEBUG_MODEL
+std::map<std::string, std::vector<float>>& debug_map_cpu();
+std::map<std::string, std::vector<float>>& debug_map_cuda();
+#endif
 
 ////////////////////////////////////////
 // Exposed for tests

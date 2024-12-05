@@ -116,6 +116,7 @@ const Tensor* get_tensor(const YALMData& yalm, const std::string& key) {
 };
 
 Block::Block(
+  int layer_i,
   const std::shared_ptr<Config> config,
   const Tensor* rms_att_weight,
   const Tensor* rms_ffn_weight,
@@ -127,6 +128,9 @@ Block::Block(
   const Tensor* w2,
   const Tensor* w3
 ) {
+#if DEBUG_MODEL
+  _layer_i = layer_i;
+#endif
   _config = config;
   switch (config->weight_dtype) {
     case DType::F32:
@@ -325,6 +329,7 @@ Model::Model(YALMData& yalm, int context) {
 
   for (int i = 0; i < config->n_layers; ++i) {
     blocks.emplace_back(std::make_shared<Block>(
+      i,
       config,
       get_tensor(yalm, fmt::format("model.layers.{}.attn.norm.weight", i)),
       get_tensor(yalm, fmt::format("model.layers.{}.mlp.norm.weight", i)),
