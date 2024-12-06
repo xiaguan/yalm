@@ -73,7 +73,7 @@ size_t Config::active_bytes(size_t pos) const {
   bytes_per_block += n_heads * head_dim * dim * weight_size; // wo
   bytes_per_block += 3 * dim * hidden_dim * weight_size; // w1, w2, w3
   size_t kv_len = std::min(static_cast<size_t>(max_seq_len), pos + 1);
-  size_t kv_entry_size = sizeof(float);
+  size_t kv_entry_size = sizeof(f16_t);
   bytes_per_block += 2 * kv_len * n_kv_heads * head_dim * kv_entry_size; // key_cache, value_cache
 
   size_t bytes = 0;
@@ -174,8 +174,8 @@ Block::Block(
     w3, config->weight_dtype, {config->hidden_dim, config->dim, 0, 0}
   );
 
-  _key_cache = new float[config->max_seq_len * config->n_kv_heads * config->head_dim]();
-  _value_cache = new float[config->max_seq_len * config->n_kv_heads * config->head_dim]();
+  _key_cache = new f16_t[config->max_seq_len * config->n_kv_heads * config->head_dim]();
+  _value_cache = new f16_t[config->max_seq_len * config->n_kv_heads * config->head_dim]();
 }
 
 Block::~Block() {
@@ -210,8 +210,8 @@ void Block::cuda() {
   _w3 = upload_cuda(_w3, _config->hidden_dim * _config->dim * weight_size);
 
   // kv cache
-  _key_cache = static_cast<float*>(upload_cuda(_key_cache, _config->max_seq_len * _config->n_kv_heads * _config->head_dim * sizeof(float)));
-  _value_cache = static_cast<float*>(upload_cuda(_value_cache, _config->max_seq_len * _config->n_kv_heads * _config->head_dim * sizeof(float)));
+  _key_cache = static_cast<f16_t*>(upload_cuda(_key_cache, _config->max_seq_len * _config->n_kv_heads * _config->head_dim * sizeof(f16_t)));
+  _value_cache = static_cast<f16_t*>(upload_cuda(_value_cache, _config->max_seq_len * _config->n_kv_heads * _config->head_dim * sizeof(f16_t)));
 }
 
 void Block::block(

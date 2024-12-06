@@ -330,7 +330,7 @@ void fused_qkv_matmul_clip(
 
 __global__
 void attn(
-  const float* kb,  // (max_seq_len, n_kv_heads, head_dim) 
+  const half* kb,  // (max_seq_len, n_kv_heads, head_dim) 
   const float* q,   // (n_heads, head_dim)
   int head_dim, 
   int kv_len, 
@@ -345,10 +345,10 @@ void attn(
   if (t >= kv_len || h >= n_heads) return;
   
   const float* query = q + h * head_dim;
-  const float* key = kb + n_kv_heads * head_dim * t + head_dim * group;
+  const half* key = kb + n_kv_heads * head_dim * t + head_dim * group;
   float score = 0.0;
   for (int i = 0; i < head_dim; i++) {
-    score += query[i] * key[i];
+    score += query[i] * __half2float(key[i]);
   }
   out[h * max_seq_len + t] = score / sqrtf((float)head_dim);
 }
@@ -389,7 +389,7 @@ void attn_softmax(
 
 __global__
 void att_mix(
-  const float* vb,  // (max_seq_len, n_kv_heads, head_dim) 
+  const half* vb,  // (max_seq_len, n_kv_heads, head_dim) 
   const float* att, // (n_heads, kv_len)
   int head_dim, 
   int n_heads, 
@@ -405,7 +405,7 @@ void att_mix(
   int kv_stride = n_kv_heads * head_dim;
   
   const float* atth = att + max_seq_len * h;
-  const float* vh = vb + head_dim * g;
+  const half* vh = vb + head_dim * g;
   float* outh = out + head_dim * h;
   
   int warp_id = threadIdx.y;
@@ -421,7 +421,7 @@ void att_mix(
     __syncthreads();
     float sum = 0.0;
     for (int t = warp_id; t < seq_len; t += t_stride) {
-      sum += vh[kv_stride * t + i] * atth[t];	
+      sum += __half2float(vh[kv_stride * t + i]) * atth[t];	
     }
     atomicAdd(&shared[threadIdx.x], sum);
     __syncthreads();
@@ -463,6 +463,42 @@ inline void rope(
     float v1 = x[pair_idx + 1];
     out[pair_idx] = v0 * fcr - v1 * fci;
     out[pair_idx + 1] = v0 * fci + v1 * fcr;
+  }
+}
+
+__device__
+inline void rope(
+  const float* x, int pair_idx, int head_dim, int pos, float theta, int rotary_dim, half* out
+) {
+  int j_head = pair_idx % head_dim;
+  if (j_head < head_dim - 1) {  // Ensure we have a pair of elements
+    float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
+    
+    float v0 = x[pair_idx];
+    float v1 = x[pair_idx + 1];
+    out[pair_idx] = __float2half(v0 * fcr - v1 * fci);
+    out[pair_idx + 1] = __float2half(v0 * fci + v1 * fcr);
+  }
+}
+
+__device__
+inline void rope(
+  const half* x, int pair_idx, int head_dim, int pos, float theta, int rotary_dim, half* out
+) {
+  int j_head = pair_idx % head_dim;
+  if (j_head < head_dim - 1) {  // Ensure we have a pair of elements
+    float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
+    
+    float v0 = __half2float(x[pair_idx]);
+    float v1 = __half2float(x[pair_idx + 1]);
+    out[pair_idx] = __float2half(v0 * fcr - v1 * fci);
+    out[pair_idx + 1] = __float2half(v0 * fci + v1 * fcr);
   }
 }
 
@@ -538,8 +574,8 @@ void fused_rope_and_cache_update(
   float theta,          // RoPE theta parameter
   int rotary_dim,       // how many dimensions to rotate
   float* q_out,         // (n_heads * head_dim,)
-  float* kb,            // (max_seq_len, n_kv_heads, head_dim)
-  float* vb            // (max_seq_len, n_kv_heads, head_dim)
+  half* kb,            // (max_seq_len, n_kv_heads, head_dim)
+  half* vb            // (max_seq_len, n_kv_heads, head_dim)
 ) {
   // Each thread handles two consecutive elements (for RoPE complex rotation)
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -555,7 +591,7 @@ void fused_rope_and_cache_update(
   
   // Handle K matrix RoPE and cache update
   if (pair_idx < n_kv_heads * head_dim) {
-    float* k_out = &kb[kv_pos * (n_kv_heads * head_dim)];
+    half* k_out = &kb[kv_pos * (n_kv_heads * head_dim)];
     rope(
       k, pair_idx, head_dim, pos, 
       theta, rotary_dim, k_out
@@ -566,15 +602,15 @@ void fused_rope_and_cache_update(
   if (pair_idx < n_kv_heads * head_dim) {
     int cache_idx = kv_pos * (n_kv_heads * head_dim) + pair_idx;
     if (pair_idx < n_kv_heads * head_dim - 1) {
-      vb[cache_idx] = v[pair_idx];
-      vb[cache_idx + 1] = v[pair_idx + 1];
+      vb[cache_idx] = __float2half(v[pair_idx]);
+      vb[cache_idx + 1] = __float2half(v[pair_idx + 1]);
     }
   }
 }
 
 __global__
 void rotate_sink_tokens(
-  float* kb, 
+  half* kb, 
   int kv_sink, 				// number of attention sinks
   int kv_dim, 				// size of each entry (all concatenated heads) in KV cache
   int head_dim,
@@ -588,7 +624,7 @@ void rotate_sink_tokens(
   
   if (pair_idx < kv_dim) {
     for (int r = 0; r < kv_sink; r++) {
-      float* k = kb + r * kv_dim;
+      half* k = kb + r * kv_dim;
       rope(k, pair_idx, head_dim, 1, theta, rotary_dim, k);
     }
   }
@@ -635,8 +671,8 @@ void Block::_block_cuda(
   // Update Q, K with RoPE relative positional encoding: 
   // complex-valued rotate q and k in each head
   // Also copy K, V to KV cache
-  float* kb = key_cache();
-  float* vb = value_cache();
+  half* kb = (half*)key_cache();
+  half* vb = (half*)value_cache();
   {
     // Calculate number of thread blocks needed
     // We need enough threads to handle the largest of:
@@ -749,8 +785,8 @@ void Block::_block_cuda(
 void mha_cuda(
   float* xout,  // (n_heads, head_dim)
   float* att,   // (n_heads, max_seq_len)
-  float* kb,    // (max_seq_len, n_kv_heads, head_dim)
-  float* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  f16_t* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  f16_t* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
@@ -759,8 +795,8 @@ void mha_cuda(
   // all cuda uploads leak forever...
   register_cuda_host(xout, n_heads * head_dim * sizeof(float));
   register_cuda_host(att, n_heads * max_seq_len * sizeof(float));
-  kb = static_cast<float*>(upload_cuda(kb, max_seq_len * n_kv_heads * head_dim * sizeof(float)));
-  vb = static_cast<float*>(upload_cuda(vb, max_seq_len * n_kv_heads * head_dim * sizeof(float)));
+  kb = static_cast<f16_t*>(upload_cuda(kb, max_seq_len * n_kv_heads * head_dim * sizeof(f16_t)));
+  vb = static_cast<f16_t*>(upload_cuda(vb, max_seq_len * n_kv_heads * head_dim * sizeof(f16_t)));
   q = static_cast<float*>(upload_cuda(q, n_heads * head_dim * sizeof(float)));
   // multihead attention: dot products and softmax
   {
@@ -771,7 +807,7 @@ void mha_cuda(
     blocks.x = (kv_len + tpb.x - 1) / tpb.x;
     blocks.y = (n_heads + tpb.y - 1) / tpb.y;
     attn<<<blocks, tpb>>>(
-      kb, q, head_dim, kv_len, max_seq_len, n_heads, n_kv_heads, att
+      (half*)kb, q, head_dim, kv_len, max_seq_len, n_heads, n_kv_heads, att
     );
     attn_softmax<<<n_heads, warp_size>>>(
       att, kv_len, max_seq_len, n_heads, att
@@ -785,7 +821,7 @@ void mha_cuda(
     dim3 blocks;
     blocks.x = n_heads;
     att_mix<<<blocks, tpb>>>(
-      vb, att,
+      (half*)vb, att,
       head_dim, n_heads, n_kv_heads, 
       kv_len, max_seq_len, xout
     );

@@ -7,6 +7,24 @@
 #include "immintrin.h"
 #include "f16cintrin.h"
 
+#if defined(__AVX2__) && defined(__F16C__)
+inline float half_to_float(f16_t x) {
+  return _cvtsh_ss(x);
+}
+inline f16_t float_to_half(float x) {
+  return _cvtss_sh(x, 0);
+}
+#else
+inline float half_to_float(f16_t x) {
+  assert(false && "float16 not supported on this platform");
+  return 0.0f;
+}
+inline f16_t float_to_half(float x) {
+  assert(false && "float16 not supported on this platform");
+  return 0;
+}
+#endif
+
 #if DEBUG_MODEL
 static std::map<std::string, std::vector<float>> _debug_map;
 std::map<std::string, std::vector<float>>& debug_map_cpu() {
@@ -164,8 +182,8 @@ void attn(
   float* xout,    // (dim,) - output vector
   float* atth,    // (kv_len,) - scratch space to hold attention scores of the sequence
   float* qh,      // (head_dim,) - query vector for this head
-  float* kh,      // (kv_len, n_kv_heads, head_dim) - buffer containing key vectors of the sequence for all KV heads
-  float* vh,      // (kv_len, n_kv_heads, head_dim) - buffer containing value vectors of the sequence for all KV heads
+  f16_t* kh,      // (kv_len, n_kv_heads, head_dim) - buffer containing key vectors of the sequence for all KV heads
+  f16_t* vh,      // (kv_len, n_kv_heads, head_dim) - buffer containing value vectors of the sequence for all KV heads
   int head_dim,   // size of the "key-space"
   int n_kv_heads, // number of kv heads, can be < n_heads (1 is MultiQueryAttention, >1 is GroupedQueryAttention)
   int kv_len      // number of tokens of the sequence we will attend over
@@ -175,7 +193,7 @@ void attn(
   for (int t = 0; t < kv_len; ++t) {
     float score = 0.0f;
     for (int i = 0; i < head_dim; ++i) {
-      score += qh[i] * kh[t * kv_stride + i];
+      score += qh[i] * half_to_float(kh[t * kv_stride + i]);
     }
     score /= sqrtf(head_dim);
     atth[t] = score;
@@ -188,7 +206,7 @@ void attn(
   for (int i = 0; i < head_dim; ++i) {
     float vi = 0.0f;
     for (int t = 0; t < kv_len; ++t) {
-      vi += atth[t] * vh[t * kv_stride + i];
+      vi += atth[t] * half_to_float(vh[t * kv_stride + i]);
     }
     xout[i] = vi;
   }
@@ -239,12 +257,12 @@ void Block::_block_cpu(
   rope(s.k(), kv_dim, c.head_dim, pos, c.rope_theta, c.rotary_dim);
   
   // key and value point to the kv cache
-  float* kb = key_cache();
-  float* vb = value_cache();
+  f16_t* kb = key_cache();
+  f16_t* vb = value_cache();
   // update kv cache
   for (int i = 0; i < kv_dim; ++i) {
-    kb[kv_pos * kv_dim + i] = s.k()[i];
-    vb[kv_pos * kv_dim + i] = s.v()[i];
+    kb[kv_pos * kv_dim + i] = float_to_half(s.k()[i]);
+    vb[kv_pos * kv_dim + i] = float_to_half(s.v()[i]);
   }
 
   // Sink tokens remain untouched while the rest of the KV cache is incrementally 
@@ -253,13 +271,13 @@ void Block::_block_cpu(
   // forward by 1. See https://arxiv.org/abs/2309.17453 for more.
   for (int r = 0; r < kv_sink; r++) {
     for (int i = 0; i < kv_dim; ++i) {
-      s.k()[i] = kb[r * kv_dim + i];
+      s.k()[i] = half_to_float(kb[r * kv_dim + i]);
     }
 
     rope(s.k(), kv_dim, c.head_dim, 1, c.rope_theta, c.rotary_dim);
 
     for (int i = 0; i < kv_dim; i++) {
-      kb[r * kv_dim + i] = s.k()[i];
+      kb[r * kv_dim + i] = float_to_half(s.k()[i]);
     }
   }
 
@@ -269,8 +287,8 @@ void Block::_block_cpu(
 #pragma omp parallel for private(h)
   for (h = 0; h < c.n_heads; h++) {
     int kv_head_offset = (h / q_per_kv_head) * c.head_dim;
-    float* kh = kb + kv_head_offset;
-    float* vh = vb + kv_head_offset;
+    f16_t* kh = kb + kv_head_offset;
+    f16_t* vh = vb + kv_head_offset;
     attn(s.xb2(h), s.att(h), s.q(h), kh, vh, c.head_dim, c.n_kv_heads, kv_len);
   }
 
@@ -319,8 +337,8 @@ void Block::_block_cpu(
 void mha_cpu(
   float* xout,  // (n_heads, head_dim)
   float* att,   // (n_heads, max_seq_len)
-  float* kb,    // (max_seq_len, n_kv_heads, head_dim)
-  float* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  f16_t* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  f16_t* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
   int head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
@@ -330,8 +348,8 @@ void mha_cpu(
 #pragma omp parallel for private(h)
   for (h = 0; h < n_heads; h++) {
     int kv_head_offset = (h / q_per_kv_head) * head_dim;
-    float* kh = kb + kv_head_offset;
-    float* vh = vb + kv_head_offset;
+    f16_t* kh = kb + kv_head_offset;
+    f16_t* vh = vb + kv_head_offset;
     attn(
       xout + head_dim * h, att + max_seq_len * h, q + head_dim * h, 
       kh, vh, head_dim, n_kv_heads, kv_len
@@ -393,14 +411,10 @@ void Model::_copy_embedding(InferenceState& s, int token) {
       break;
     }
     case DType::F16: {
-#if defined(__AVX2__) && defined(__F16C__)
       f16_t* emb = static_cast<f16_t*>(token_embedding_table);
       for (int i = 0; i < c.dim; i+=1) {
-        s.x()[i] = _cvtsh_ss(emb[token * c.dim + i]);
+        s.x()[i] = half_to_float(emb[token * c.dim + i]);
       }
-#else
-      assert(false && "float16 not supported on this platform");
-#endif
       break;
     }
     default: {
