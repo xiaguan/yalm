@@ -469,46 +469,14 @@ void att_mix(
       float2 v01;
       float att_t;
       switch (ctr_mod) {
-        case 0: {
-          v01 = v01_0;
-          att_t = att_0;
-          break;
-        }
-        case 1: {
-          v01 = v01_1;
-          att_t = att_1;
-          break;
-        }
-        case 2: {
-          v01 = v01_2;
-          att_t = att_2;
-          break;
-        }
-        case 3: {
-          v01 = v01_3;
-          att_t = att_3;
-          break;
-        }
-        case 4: {
-          v01 = v01_4;
-          att_t = att_4;
-          break;
-        }
-        case 5: {
-          v01 = v01_5;
-          att_t = att_5;
-          break;
-        }
-        case 6: {
-          v01 = v01_6;
-          att_t = att_6;
-          break;
-        }
-        case 7: {
-          v01 = v01_7;
-          att_t = att_7;
-          break;
-        }
+        case 0: v01 = v01_0; att_t = att_0; break;
+        case 1: v01 = v01_1; att_t = att_1; break;
+        case 2: v01 = v01_2; att_t = att_2; break;
+        case 3: v01 = v01_3; att_t = att_3; break;
+        case 4: v01 = v01_4; att_t = att_4; break;
+        case 5: v01 = v01_5; att_t = att_5; break;
+        case 6: v01 = v01_6; att_t = att_6; break;
+        case 7: v01 = v01_7; att_t = att_7; break;
       }
       // Sadly CUDA does not have float2 SIMD ops
       sum01.x += v01.x * att_t;
