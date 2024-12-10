@@ -426,57 +426,72 @@ void att_mix(
     }
     __syncthreads();
     float2 sum01 = make_float2(0.0, 0.0);
-    constexpr int UNROLL = 8;
-    float2  v01_0, 
-            v01_1, 
-            v01_2, 
-            v01_3,
-            v01_4,
-            v01_5,
-            v01_6,
-            v01_7;
-    float   att_0, 
-            att_1, 
-            att_2, 
-            att_3,
-            att_4,
-            att_5,
-            att_6,
-            att_7;
+    constexpr int UNROLL = 16;
+    half2 v01_0; float att_0; 
+    half2 v01_1; float att_1; 
+    half2 v01_2; float att_2; 
+    half2 v01_3; float att_3;
+    half2 v01_4; float att_4;
+    half2 v01_5; float att_5;
+    half2 v01_6; float att_6;
+    half2 v01_7; float att_7;
+    half2 v01_8; float att_8; 
+    half2 v01_9; float att_9; 
+    half2 v01_10; float att_10; 
+    half2 v01_11; float att_11;
+    half2 v01_12; float att_12;
+    half2 v01_13; float att_13;
+    half2 v01_14; float att_14;
+    half2 v01_15; float att_15;
     int t = warp_id;
     for (int ctr = 0; ctr < seq_len / t_stride; t += t_stride, ctr++) {
       int ctr_mod = ctr % UNROLL;
       if (ctr_mod == 0) {
         // prefetch every UNROLL iterations
-        v01_0 = __half22float2(*((half2*)&vh[kv_stride * (t + 0*t_stride) + i]));
-        v01_1 = __half22float2(*((half2*)&vh[kv_stride * (t + 1*t_stride) + i]));
-        v01_2 = __half22float2(*((half2*)&vh[kv_stride * (t + 2*t_stride) + i]));
-        v01_3 = __half22float2(*((half2*)&vh[kv_stride * (t + 3*t_stride) + i]));
-        v01_4 = __half22float2(*((half2*)&vh[kv_stride * (t + 4*t_stride) + i]));
-        v01_5 = __half22float2(*((half2*)&vh[kv_stride * (t + 5*t_stride) + i]));
-        v01_6 = __half22float2(*((half2*)&vh[kv_stride * (t + 6*t_stride) + i]));
-        v01_7 = __half22float2(*((half2*)&vh[kv_stride * (t + 7*t_stride) + i]));
-        att_0 = atth[t + 0*t_stride];
-        att_1 = atth[t + 1*t_stride];
-        att_2 = atth[t + 2*t_stride];
-        att_3 = atth[t + 3*t_stride];
-        att_4 = atth[t + 4*t_stride];
-        att_5 = atth[t + 5*t_stride];
-        att_6 = atth[t + 6*t_stride];
-        att_7 = atth[t + 7*t_stride];
+        #define PREFETCH(j) \
+          v01_##j = *((half2*)&vh[kv_stride * (t + j*t_stride) + i]); \
+          att_##j = atth[t + j*t_stride];
+        PREFETCH(0)
+        PREFETCH(1)
+        PREFETCH(2)
+        PREFETCH(3)
+        PREFETCH(4)
+        PREFETCH(5)
+        PREFETCH(6)
+        PREFETCH(7)
+        PREFETCH(8)
+        PREFETCH(9)
+        PREFETCH(10)
+        PREFETCH(11)
+        PREFETCH(12)
+        PREFETCH(13)
+        PREFETCH(14)
+        PREFETCH(15)
+        #undef PREFETCH
       }
       // pull one value out of prefetch batch
       float2 v01;
       float att_t;
       switch (ctr_mod) {
-        case 0: v01 = v01_0; att_t = att_0; break;
-        case 1: v01 = v01_1; att_t = att_1; break;
-        case 2: v01 = v01_2; att_t = att_2; break;
-        case 3: v01 = v01_3; att_t = att_3; break;
-        case 4: v01 = v01_4; att_t = att_4; break;
-        case 5: v01 = v01_5; att_t = att_5; break;
-        case 6: v01 = v01_6; att_t = att_6; break;
-        case 7: v01 = v01_7; att_t = att_7; break;
+        #define CASE(j) \
+          case j: v01 = __half22float2(v01_##j); att_t = att_##j; break;
+        CASE(0)
+        CASE(1)
+        CASE(2)
+        CASE(3)
+        CASE(4)
+        CASE(5)
+        CASE(6)
+        CASE(7)
+        CASE(8)
+        CASE(9)
+        CASE(10)
+        CASE(11)
+        CASE(12)
+        CASE(13)
+        CASE(14)
+        CASE(15)
+        #undef CASE
       }
       // Sadly CUDA does not have float2 SIMD ops
       sum01.x += v01.x * att_t;

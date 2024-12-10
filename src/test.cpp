@@ -417,7 +417,7 @@ int main(int argc, char* argv[]) {
       exit(1);
     }
     std::cout << "Running kernel benchmark" << std::endl;
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 1; i++) {
       kernel_bench(argv[2]);
     }
   } else {
