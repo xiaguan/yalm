@@ -445,22 +445,22 @@ void att_mix(
       int ctr_mod = ctr % UNROLL;
       if (ctr_mod == 0) {
         // prefetch every UNROLL iterations
-        v01_0 = __half22float2(*((half2*)&vh[kv_stride * (t + 0) + i]));
-        v01_1 = __half22float2(*((half2*)&vh[kv_stride * (t + 1) + i]));
-        v01_2 = __half22float2(*((half2*)&vh[kv_stride * (t + 2) + i]));
-        v01_3 = __half22float2(*((half2*)&vh[kv_stride * (t + 3) + i]));
-        v01_4 = __half22float2(*((half2*)&vh[kv_stride * (t + 4) + i]));
-        v01_5 = __half22float2(*((half2*)&vh[kv_stride * (t + 5) + i]));
-        v01_6 = __half22float2(*((half2*)&vh[kv_stride * (t + 6) + i]));
-        v01_7 = __half22float2(*((half2*)&vh[kv_stride * (t + 7) + i]));
-        att_0 = atth[t + 0];
-        att_1 = atth[t + 1];
-        att_2 = atth[t + 2];
-        att_3 = atth[t + 3];
-        att_4 = atth[t + 4];
-        att_5 = atth[t + 5];
-        att_6 = atth[t + 6];
-        att_7 = atth[t + 7];
+        v01_0 = __half22float2(*((half2*)&vh[kv_stride * (t + 0*t_stride) + i]));
+        v01_1 = __half22float2(*((half2*)&vh[kv_stride * (t + 1*t_stride) + i]));
+        v01_2 = __half22float2(*((half2*)&vh[kv_stride * (t + 2*t_stride) + i]));
+        v01_3 = __half22float2(*((half2*)&vh[kv_stride * (t + 3*t_stride) + i]));
+        v01_4 = __half22float2(*((half2*)&vh[kv_stride * (t + 4*t_stride) + i]));
+        v01_5 = __half22float2(*((half2*)&vh[kv_stride * (t + 5*t_stride) + i]));
+        v01_6 = __half22float2(*((half2*)&vh[kv_stride * (t + 6*t_stride) + i]));
+        v01_7 = __half22float2(*((half2*)&vh[kv_stride * (t + 7*t_stride) + i]));
+        att_0 = atth[t + 0*t_stride];
+        att_1 = atth[t + 1*t_stride];
+        att_2 = atth[t + 2*t_stride];
+        att_3 = atth[t + 3*t_stride];
+        att_4 = atth[t + 4*t_stride];
+        att_5 = atth[t + 5*t_stride];
+        att_6 = atth[t + 6*t_stride];
+        att_7 = atth[t + 7*t_stride];
       }
       // pull one value out of prefetch batch
       float2 v01;
