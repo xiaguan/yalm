@@ -9,6 +9,8 @@
 #include <limits.h>
 #include <string>
 
+#include "immintrin.h"
+
 using json = nlohmann::json;
 
 void Config::from_yalm(YALMData& yalm, int context) {
@@ -383,3 +385,37 @@ void Model::forward(InferenceState& s, int token, int pos, InferenceMode mode) {
     _forward_cpu(s, token, pos, mode);
   }
 }
+
+#if DEBUG_MODEL
+DebugTensor::DebugTensor(const std::vector<float>& data) {
+  data_f32 = data;
+  data_type = DataType::F32;
+}
+DebugTensor::DebugTensor(const std::vector<f16_t>& data) {
+  data_f16 = data;
+  data_type = DataType::F16;
+}
+
+float DebugTensor::max_err(const DebugTensor& other) const {
+  if (data_type != other.data_type) {
+    return -1;
+  }
+  if (data_type == DataType::F32) {
+    float max_err = 0;
+    for (size_t i = 0; i < data_f32.size(); i++) {
+      max_err = std::max(max_err, std::abs(data_f32[i] - other.data_f32[i]));
+    }
+    return max_err;
+  } else {
+#if defined(__F16C__)
+    float max_err = 0;
+    for (size_t i = 0; i < data_f16.size(); i++) {
+      max_err = std::max(max_err, std::abs(_cvtsh_ss(data_f16[i]) - _cvtsh_ss(other.data_f16[i])));
+    }
+    return max_err;
+#else
+  assert(false && "float16 not supported on this platform");
+#endif
+  }
+}
+#endif

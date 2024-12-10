@@ -42,11 +42,8 @@ void error_usage() {
 void debug_tensors(Config& c) {
   assert(debug_map_cpu().size() == debug_map_cuda().size());
   for (auto& [name, cpu] : debug_map_cpu()) {
-    std::vector<float>& cuda = debug_map_cuda().at(name);
-    float maxerr = 0;
-    for (size_t i = 0; i < cuda.size(); i++) {
-      maxerr = std::max(maxerr, std::abs(cpu[i] - cuda[i]));
-    }
+    DebugTensor& cuda = debug_map_cuda().at(name);
+    float maxerr = cpu.max_err(cuda);
     std::cout << fmt::format("{} maxerr: {}", name, maxerr) << std::endl;
   }
   std::cout << std::endl;

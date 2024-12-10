@@ -85,17 +85,20 @@ extern "C" void set_cuda_device(int device) {
 }
 
 #if DEBUG_MODEL
-static std::map<std::string, std::vector<float>> _debug_map;
-std::map<std::string, std::vector<float>>& debug_map_cuda() {
+#include "fmt/format.h"
+static std::map<std::string, DebugTensor> _debug_map;
+std::map<std::string, DebugTensor>& debug_map_cuda() {
   return _debug_map;
 }
-std::vector<float> copy_debug_tensor(float* device, size_t numel) {
-  float* host = (float*)cuda_hostcopy(device, numel * sizeof(float));
-  std::vector<float> fv(host, host + numel);
+template <typename T>
+static std::vector<T> copy_debug_tensor(T* device, size_t numel) {
+  T* host = (T*)cuda_hostcopy(device, numel * sizeof(T));
+  std::vector<T> fv(host, host + numel);
   return fv;
 }
-void save_debug_tensor(const std::string& name, float* x, size_t size) {
-  _debug_map[name] = copy_debug_tensor(x, size);
+template <typename T>
+static void save_debug_tensor(const std::string& name, T* x, size_t size) {
+  _debug_map[name] = DebugTensor(copy_debug_tensor<T>(x, size));
 }
 #endif
 

@@ -26,19 +26,22 @@ inline f16_t float_to_half(float x) {
 #endif
 
 #if DEBUG_MODEL
-static std::map<std::string, std::vector<float>> _debug_map;
-std::map<std::string, std::vector<float>>& debug_map_cpu() {
+#include "fmt/format.h"
+static std::map<std::string, DebugTensor> _debug_map;
+std::map<std::string, DebugTensor>& debug_map_cpu() {
   return _debug_map;
 }
-std::vector<float> copy_debug_tensor(float* x, size_t size) {
-  std::vector<float> out(size);
+template <typename T>
+static std::vector<T> copy_debug_tensor(T* x, size_t size) {
+  std::vector<T> out(size);
   for (size_t i = 0; i < size; i++) {
     out[i] = x[i];
   }
   return out;
 }
-void save_debug_tensor(const std::string& name, float* x, size_t size) {
-  _debug_map[name] = copy_debug_tensor(x, size);
+template <typename T>
+static void save_debug_tensor(const std::string& name, T* x, size_t size) {
+  _debug_map[name] = DebugTensor(copy_debug_tensor<T>(x, size));
 }
 #endif
 

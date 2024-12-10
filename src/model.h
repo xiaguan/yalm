@@ -232,8 +232,24 @@ private:
 };
 
 #if DEBUG_MODEL
-std::map<std::string, std::vector<float>>& debug_map_cpu();
-std::map<std::string, std::vector<float>>& debug_map_cuda();
+struct DebugTensor {
+  enum struct DataType {
+    F32,
+    F16,
+  };
+
+  DebugTensor() = default;
+  DebugTensor(const std::vector<float>& data);
+  DebugTensor(const std::vector<f16_t>& data);
+  DebugTensor& operator=(const DebugTensor& other) = default;
+  float max_err(const DebugTensor& other) const;
+
+  std::vector<float> data_f32;
+  std::vector<f16_t> data_f16;
+  DataType data_type;
+};
+std::map<std::string, DebugTensor>& debug_map_cpu();
+std::map<std::string, DebugTensor>& debug_map_cuda();
 #endif
 
 ////////////////////////////////////////
