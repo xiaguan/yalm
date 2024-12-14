@@ -1,6 +1,6 @@
 yalm (Yet Another Language Model) is an LLM inference implementation in C++/CUDA, using no libraries except to load and save frozen LLM weights.
-
-See my blog post [Fast LLM Inference From Scratch](https://andrewkchan.dev/posts/yalm.html) for more.
+- This project is intended as an educational exercise in performance engineering and LLM inference implementation. The codebase therefore emphasizes documentation, whether external or in comments, scientific understanding of optimizations, and readability where possible.
+- See my blog post [Fast LLM Inference From Scratch](https://andrewkchan.dev/posts/yalm.html) for more.
 
 Latest benchmarks with Mistral-7B-Instruct-v0.2 in FP16 with 4k context, on RTX 4090 + EPYC 7702P:
 
