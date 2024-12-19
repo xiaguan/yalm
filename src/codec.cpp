@@ -137,8 +137,8 @@ int YALMData::from_file(const std::string& filename) {
   void* bytes_ptr = (char*)data + sizeof(uint64_t) + json_size;
   size_t bytes_size = size - sizeof(uint64_t) - json_size;
 
-  json_ptr[json_size - 1] = 0; // null-terminate the JSON string
-  json header = json::parse(json_ptr);
+  std::string json_str(json_ptr, json_size);
+  json header = json::parse(json_str);
 
   for (auto& [key, val] : header.items()) {
     if (key == "__metadata__") {
