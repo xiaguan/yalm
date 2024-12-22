@@ -13,6 +13,7 @@ from safetensors.torch import save_file
 import torch
 
 SUPPORTED_ARCHITECTURES = [
+  "LlamaForCausalLM",
   "MistralForCausalLM"
 ]
 SUPPORTED_DTYPES = ["fp32", "fp16", "fp8"]
@@ -26,7 +27,7 @@ class Metadata:
     if dtype not in SUPPORTED_DTYPES:
       raise Exception(f"Data type {dtype} is not supported, must be one of {SUPPORTED_DTYPES}")
     self.dtype = dtype
-    if arch == "MistralForCausalLM":
+    if arch in ["MistralForCausalLM", "LlamaForCausalLM"]:
       self.dim = config["hidden_size"]
       self.hidden_dim = config["intermediate_size"]
       self.head_dim = config.get("head_dim", config["hidden_size"] // config["num_attention_heads"])
@@ -42,6 +43,10 @@ class Metadata:
       self.norm_eps = config["rms_norm_eps"]
       self.norm_type = "rmsnorm"
 
+      # TODO support bias
+      assert config.get("attention_bias", False) == False
+      assert config.get("mlp_bias", False) == False
+
       assert config["hidden_act"] in ["gelu", "silu"]
       self.act_type = config["hidden_act"]
   
@@ -49,7 +54,7 @@ class Metadata:
     result = {}
     result["arch"] = self.arch
     result["dtype"] = self.dtype
-    if self.arch == "MistralForCausalLM":
+    if self.arch in ["MistralForCausalLM", "LlamaForCausalLM"]:
       result["dim"] = str(self.dim)
       result["hidden_dim"] = str(self.hidden_dim)
       result["head_dim"] = str(self.head_dim)
@@ -67,7 +72,22 @@ class Metadata:
       result["act_type"] = str(self.act_type)
     return result
 
-def load_tokens(tokenizer_path, vocab_size):
+# this is a horrible gpt-2 unicode byte encoder hack from https://github.com/openai/gpt-2/blob/master/src/encoder.py#L9
+# this has poisoned all HF tokenizer configs that use ByteLevel decoder/preprocessor
+# as a result we get crazy UTF-8-as-bytes-as-UTF8 in the tokenizer data that we need to convert back
+def gpt2_bytes_to_unicode():
+  bs = list(range(ord("!"), ord("~")+1))+list(range(ord("¡"), ord("¬")+1))+list(range(ord("®"), ord("ÿ")+1))
+  cs = bs[:]
+  n = 0
+  for b in range(2**8):
+    if b not in bs:
+      bs.append(b)
+      cs.append(2**8+n)
+      n += 1
+  cs = [chr(n) for n in cs]
+  return dict(zip(bs, cs))
+
+def load_tokens(tokenizer_path, vocab_size, use_gpt2_byte_preprocessing):
   tokens = [""] * vocab_size
   with open(tokenizer_path, "r") as f:
     tokenizer = json.load(f)
@@ -81,10 +101,14 @@ def load_tokens(tokenizer_path, vocab_size):
   for added in tokenizer["added_tokens"]:
     tokens[added["id"]] = added["content"]
   
+  gpt2_decode = {v: k for k, v in gpt2_bytes_to_unicode().items()}
   # Preprocess tokens into UTF-8 encoding
   for i, t in enumerate(tokens):
-    t = t.replace('\u2581', ' ') # sentencepiece uses this character as whitespace
-    b = t.encode('utf-8')
+    if use_gpt2_byte_preprocessing:
+      b = bytes([gpt2_decode.get(c, 0) for c in t])
+    else:
+      t = t.replace('\u2581', ' ') # sentencepiece uses this character as whitespace
+      b = t.encode('utf-8')
     b = b.replace(b"\0", b"\7") # replace null bytes with bell characters
     assert b.count(0) == 0 # no null bytes allowed
     tokens[i] = b
@@ -160,6 +184,9 @@ def load_weights(model_files, dtype_str, metadata, tie_word_embeddings):
   tensors["model.norm.weight"] = weights["model.norm.weight"].float()
   if tie_word_embeddings == False:
     tensors["model.output.weight"] = conv(weights["lm_head.weight"])
+  else:
+    # Model output classifier just uses the word embeddings matrix
+    pass
   
   print() # newline
   return tensors
@@ -194,8 +221,9 @@ if __name__ == "__main__":
   with open(args.config, "r") as f:
     config = json.load(f)
     metadata = Metadata(config, args.dtype)
+    use_gpt2_byte_preprocessing = not config.get("byte_fallback", False)
 
-  tokens = load_tokens(args.tokenizer, metadata.vocab_size)
+  tokens = load_tokens(args.tokenizer, metadata.vocab_size, use_gpt2_byte_preprocessing)
   tensors = load_weights(args.models, args.dtype, metadata, config.get("tie_word_embeddings", None))
 
   # add tokenizer tensors at the end (to maximize the chance of model tensor alignment)

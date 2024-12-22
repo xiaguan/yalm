@@ -350,11 +350,16 @@ Model::Model(YALMData& yalm, int context) {
     DType::F32, 
     {config->dim, 0, 0, 0}
   ));
-  wcls = check_tensor(
-    get_tensor(yalm, "model.output.weight"), 
-    config->weight_dtype, 
-    {config->vocab_size, config->dim, 0, 0}
-  );
+  bool tie_word_embeddings = yalm.tensors.count("model.output.weight") == 0;
+  if (tie_word_embeddings) {
+    wcls = token_embedding_table;
+  } else {
+    wcls = check_tensor(
+      get_tensor(yalm, "model.output.weight"), 
+      config->weight_dtype, 
+      {config->vocab_size, config->dim, 0, 0}
+    );
+  }
 }
 
 void Model::cuda() {
