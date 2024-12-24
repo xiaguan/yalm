@@ -38,6 +38,7 @@ LDFLAGS+=-lcudart
 
 ifneq (,$(wildcard /usr/local/cuda))
   LDFLAGS+=-L/usr/local/cuda/lib64
+  CFLAGS+=-I/usr/local/cuda/include
 endif
 
 CUFLAGS+=-O2 -lineinfo -Ivendor

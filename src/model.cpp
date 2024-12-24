@@ -306,6 +306,7 @@ void InferenceState::cuda() {
     return;
   }
   _device = Device::CUDA;
+  init_cuda_stream(&_stream);
   _x = static_cast<float*>(upload_cuda(_x, _config->dim * sizeof(float)));
   _xb = static_cast<float*>(upload_cuda(_xb, _config->dim * sizeof(float)));
   _xb2 = static_cast<float*>(upload_cuda(_xb2, _config->dim * sizeof(float)));

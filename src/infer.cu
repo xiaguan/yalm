@@ -84,6 +84,10 @@ extern "C" void set_cuda_device(int device) {
   CUDA_CHECK(cudaDeviceGetAttribute(&max_threads_per_block, cudaDevAttrMaxThreadsPerBlock, device));
 }
 
+extern "C" void init_cuda_stream(cudaStream_t* stream) {
+  CUDA_CHECK(cudaStreamCreate(stream));
+}
+
 #if DEBUG_MODEL
 #include "fmt/format.h"
 static std::map<std::string, DebugTensor> _debug_map;
@@ -730,7 +734,7 @@ void Block::_block_cuda(
   // attention pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm<<<1, max_threads_per_block>>>(
+      rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
         s.x(), rms_att_weight(), c.dim, c.norm_eps, s.xb()
       );
       break;
@@ -744,7 +748,7 @@ void Block::_block_cuda(
     // qkv matmuls for this position
     // some models require clipping qkv values
     int total_rows = q_dim + 2 * kv_dim;  // Total rows across Q, K, V
-    fused_qkv_matmul_clip<<<total_rows, warp_size>>>(
+    fused_qkv_matmul_clip<<<total_rows, warp_size, 0, s.stream()>>>(
       wq<T>(),
       wk<T>(),
       wv<T>(),
@@ -773,7 +777,7 @@ void Block::_block_cuda(
     int threads_needed = (max_dim + 1) / 2;  // Each thread handles 2 elements
     int num_blocks = (threads_needed + max_threads_per_block - 1) / max_threads_per_block;
     
-    fused_rope_and_cache_update<<<num_blocks, max_threads_per_block>>>(
+    fused_rope_and_cache_update<<<num_blocks, max_threads_per_block, 0, s.stream()>>>(
       s.q(),
       s.k(),
       s.v(),
@@ -796,7 +800,7 @@ void Block::_block_cuda(
     // forward by 1. See https://arxiv.org/abs/2309.17453 for more.
     int threads_needed = (kv_dim + 1) / 2;  // Each thread handles 2 elements
     int num_blocks = (threads_needed + max_threads_per_block - 1) / max_threads_per_block;
-    rotate_sink_tokens<<<num_blocks, max_threads_per_block>>>(
+    rotate_sink_tokens<<<num_blocks, max_threads_per_block, 0, s.stream()>>>(
       kb, kv_sink, kv_dim, c.head_dim, c.rope_theta, c.rotary_dim
     );
   }
@@ -809,10 +813,10 @@ void Block::_block_cuda(
     dim3 blocks;
     blocks.x = (kv_len + tpb.x - 1) / tpb.x;
     blocks.y = (c.n_heads + tpb.y - 1) / tpb.y;
-    attn<<<blocks, tpb>>>(
+    attn<<<blocks, tpb, 0, s.stream()>>>(
       kb, s.q(), c.head_dim, kv_len, c.max_seq_len, c.n_heads, c.n_kv_heads, s.att()
     );
-    attn_softmax<<<c.n_heads, warp_size>>>(
+    attn_softmax<<<c.n_heads, warp_size, 0, s.stream()>>>(
       s.att(), kv_len, c.max_seq_len, c.n_heads, s.att()
     );
   }
@@ -823,7 +827,7 @@ void Block::_block_cuda(
     tpb.y = min(kv_len, max_threads_per_block / warp_size);
     dim3 blocks;
     blocks.x = c.n_heads;
-    att_mix<<<blocks, tpb>>>(
+    att_mix<<<blocks, tpb, 0, s.stream()>>>(
       vb, s.att(),
       c.head_dim, c.n_heads, c.n_kv_heads, 
       kv_len, c.max_seq_len, s.xb2()
@@ -832,14 +836,14 @@ void Block::_block_cuda(
 
   // final matmul projection and residual back:
   // x <- wo(...) + x
-  fused_matmul_add_residuals<<<c.dim/32, warp_size*32>>>(
+  fused_matmul_add_residuals<<<c.dim/32, warp_size*32, 0, s.stream()>>>(
     wo<T>(), s.xb2(), q_dim, c.dim, s.x()
   );
   
   // ffn pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm<<<1, max_threads_per_block>>>(
+      rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
         s.x(), rms_ffn_weight(), c.dim, c.norm_eps, s.xb()
       );
       break;
@@ -851,7 +855,7 @@ void Block::_block_cuda(
   switch (c.act) {
     case ActivationType::GELU: {
       fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
-        c.hidden_dim, warp_size
+        c.hidden_dim, warp_size, 0, s.stream()
       >>>(
         w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
       );
@@ -859,7 +863,7 @@ void Block::_block_cuda(
     }
     case ActivationType::SILU: {
       fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
-        c.hidden_dim, warp_size
+        c.hidden_dim, warp_size, 0, s.stream()
       >>>(
         w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
       );
@@ -868,7 +872,7 @@ void Block::_block_cuda(
   }
   
   // add residual back: x <- w2(...) + x
-  fused_matmul_add_residuals<<<c.dim/32, warp_size*32>>>(
+  fused_matmul_add_residuals<<<c.dim/32, warp_size*32, 0, s.stream()>>>(
     w2<T>(), s.hb(), c.hidden_dim, c.dim, s.x()
   );
 }
@@ -897,10 +901,10 @@ void mha_cuda(
     dim3 blocks;
     blocks.x = (kv_len + tpb.x - 1) / tpb.x;
     blocks.y = (n_heads + tpb.y - 1) / tpb.y;
-    attn<<<blocks, tpb>>>(
+    attn<<<blocks, tpb, 0, cudaStreamLegacy>>>(
       (half*)kb, q, head_dim, kv_len, max_seq_len, n_heads, n_kv_heads, att
     );
-    attn_softmax<<<n_heads, warp_size>>>(
+    attn_softmax<<<n_heads, warp_size, 0, cudaStreamLegacy>>>(
       att, kv_len, max_seq_len, n_heads, att
     );
   }
@@ -911,7 +915,7 @@ void mha_cuda(
     tpb.y = min(kv_len, max_threads_per_block / warp_size);
     dim3 blocks;
     blocks.x = n_heads;
-    att_mix<<<blocks, tpb>>>(
+    att_mix<<<blocks, tpb, 0, cudaStreamLegacy>>>(
       (half*)vb, att,
       head_dim, n_heads, n_kv_heads, 
       kv_len, max_seq_len, xout
@@ -932,7 +936,7 @@ void matmul_cuda(float* xout, float* x, T* w, int n, int d) {
   register_cuda_host(xout, d * sizeof(float));
   x = static_cast<float*>(upload_cuda(x, n * sizeof(float)));
   w = static_cast<T*>(upload_cuda(w, n * d * sizeof(T)));
-  matmul<<<d, warp_size>>>(w, x, n, d, xout);
+  matmul<<<d, warp_size, 0, cudaStreamLegacy>>>(w, x, n, d, xout);
   CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
   CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
   unregister_cuda_host(xout);
@@ -969,7 +973,7 @@ void ffn_cuda(
   switch (act) {
     case ActivationType::GELU: {
       fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
-        hidden_dim, warp_size
+        hidden_dim, warp_size, 0, cudaStreamLegacy
       >>>(
         w1, w3, x, dim, hidden_dim, hb
       );
@@ -977,7 +981,7 @@ void ffn_cuda(
     }
     case ActivationType::SILU: {
       fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
-        hidden_dim, warp_size
+        hidden_dim, warp_size, 0, cudaStreamLegacy
       >>>(
         w1, w3, x, dim, hidden_dim, hb
       );
@@ -985,8 +989,8 @@ void ffn_cuda(
     }
   }
   
-  matmul<<<dim, warp_size>>>(w2, hb, hidden_dim, dim, xout);
-  CUDA_CHECK(cudaDeviceSynchronize()); // After this, xout contains output
+  matmul<<<dim, warp_size, 0, cudaStreamLegacy>>>(w2, hb, hidden_dim, dim, xout);
+  CUDA_CHECK(cudaStreamSynchronize(cudaStreamLegacy)); // After this, xout contains output
   CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
   unregister_cuda_host(xout);
 }
@@ -1019,7 +1023,8 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
     case DType::F32: {
       copy_embedding<<<
         (c.dim + max_threads_per_block - 1)/max_threads_per_block,
-        max_threads_per_block
+        max_threads_per_block,
+        0, s.stream()
       >>>(
         static_cast<float*>(token_embedding_table), c.dim, token, s.x()
       );
@@ -1028,7 +1033,8 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
     case DType::F16: {
       copy_embedding<<<
         (c.dim + max_threads_per_block - 1)/max_threads_per_block,
-        max_threads_per_block
+        max_threads_per_block,
+        0, s.stream()
       >>>(
         static_cast<half*>(token_embedding_table), c.dim, token, s.x()
       );
@@ -1060,7 +1066,7 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
   // final layer norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm<<<1, max_threads_per_block>>>(
+      rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
         s.x(), rms_final_weight, c.dim, c.norm_eps, s.x()
       );
       break;
@@ -1070,13 +1076,13 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
   // classifier into logits
   switch (c.weight_dtype) {
     case DType::F32: {
-      matmul_wide<<<c.vocab_size/32, warp_size*32>>>(
+      matmul_wide<<<c.vocab_size/32, warp_size*32, 0, s.stream()>>>(
         static_cast<float*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
       );
       break;
     }
     case DType::F16: {
-      matmul_wide<<<c.vocab_size/32, warp_size*32>>>(
+      matmul_wide<<<c.vocab_size/32, warp_size*32, 0, s.stream()>>>(
         static_cast<half*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
       );
       break;
@@ -1086,6 +1092,6 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
     }
   }
   
-  CUDA_CHECK(cudaDeviceSynchronize()); // After this, s.logits contains logits of output token
+  CUDA_CHECK(cudaStreamSynchronize(s.stream())); // After this, s.logits contains logits of output token
   CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
 }

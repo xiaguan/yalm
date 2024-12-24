@@ -1,6 +1,7 @@
 #pragma once
 
 #include "codec.h"
+#include "cuda_runtime_api.h"
 
 #include <memory>
 #include <vector>
@@ -30,6 +31,7 @@ extern "C" void register_cuda_host(void* host, size_t size);
 extern "C" void free_cuda(void* device);
 extern "C" void unregister_cuda_host(void* host);
 extern "C" void set_cuda_device(int device);
+extern "C" void init_cuda_stream(cudaStream_t* stream);
 
 struct Config {
   int dim;                  // transformer input & output dimension
@@ -83,10 +85,12 @@ struct InferenceState {
 
   void cuda();
   Device device() const { return _device; }
+  cudaStream_t stream() const { return _stream; }
 
 private:
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
+  cudaStream_t _stream;
 
   // current activations
   float* _x = nullptr;         // (dim,) - latest activation
