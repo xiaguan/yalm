@@ -1018,7 +1018,43 @@ template<> void Block::_block_cuda<f16_t>(InferenceState& s, int pos, int kv_sin
 
 void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode) {
   const Config& c = *config;
+  CudaGraph& g = s.graph(mode);
+
+  // Dispatch all the kernels that comprise the work being done on the GPU 
+  // for the forward pass of the model. These calls will be recorded in the 
+  // InferenceState stream to form a CUDA graph, which we can save and call again,
+  // which is more efficient to execute on the device than the equivalent series
+  // of kernel dispatches.
+  CUDA_CHECK(cudaStreamBeginCapture(s.stream(), cudaStreamCaptureModeGlobal));
+  _forward_cuda_build_graph(s, token, pos, mode);
+  CUDA_CHECK(cudaStreamEndCapture(s.stream(), &g.graph));
+
+  // Save or update the graph if it has already been saved for this mode.
+  if (g.is_created) {
+    // Graph already exists, try to apply changes
+    if (cudaGraphExecUpdate(g.instance, g.graph, nullptr) != cudaSuccess) {
+      // Only instantiate a new graph if update fails
+      CUDA_CHECK(cudaGraphExecDestroy(g.instance));
+      CUDA_CHECK(cudaGraphInstantiate(&g.instance, g.graph, nullptr, nullptr, 0));
+    }
+  } else {
+    // Creating a new graph for the first time for this mode
+    CUDA_CHECK(cudaGraphInstantiate(&g.instance, g.graph, nullptr, nullptr, 0));
+    g.is_created = true;
+  }
+  CUDA_CHECK(cudaGraphDestroy(g.graph));
+  // Launch the graph that we have now saved.
+  CUDA_CHECK(cudaGraphLaunch(g.instance, s.stream()));
   
+  if (mode == InferenceMode::OUTPUT_LOGITS) {
+    CUDA_CHECK(cudaStreamSynchronize(s.stream())); // After this, s.logits contains logits of output token
+  }
+  CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+}
+
+void Model::_forward_cuda_build_graph(InferenceState& s, int token, int pos, InferenceMode mode) {
+  const Config& c = *config;
+
   switch (c.weight_dtype) {
     case DType::F32: {
       copy_embedding<<<
@@ -1091,7 +1127,4 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
       assert(false && "unsupported weight dtype for CUDA");
     }
   }
-  
-  CUDA_CHECK(cudaStreamSynchronize(s.stream())); // After this, s.logits contains logits of output token
-  CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
 }

@@ -25,6 +25,11 @@ enum class Device {
   CUDA,
 };
 
+enum class InferenceMode {
+  HYDRATE_KV_CACHE, // only hydrate the KV cache and don't compute output logits
+  OUTPUT_LOGITS // set InferenceState logits to logits for the next token
+};
+
 extern "C" void* upload_cuda(void* host, size_t size);
 extern "C" void* download_cuda(void* device, size_t size, std::string debug);
 extern "C" void register_cuda_host(void* host, size_t size);
@@ -58,6 +63,12 @@ struct Config {
   size_t active_bytes(size_t pos) const;
 };
 
+struct CudaGraph {
+  cudaGraph_t graph;
+  cudaGraphExec_t instance;
+  bool is_created = false;
+};
+
 // Buffer for all state used during a forward pass.
 // Members are reused across subsequent blocks and passes.
 // This lets us avoid allocations during inference.
@@ -86,11 +97,16 @@ struct InferenceState {
   void cuda();
   Device device() const { return _device; }
   cudaStream_t stream() const { return _stream; }
+  CudaGraph& graph(InferenceMode mode) {
+    return mode == InferenceMode::HYDRATE_KV_CACHE ? _hydrate_graph : _output_graph;
+  }
 
 private:
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
   cudaStream_t _stream;
+  CudaGraph _hydrate_graph;
+  CudaGraph _output_graph;
 
   // current activations
   float* _x = nullptr;         // (dim,) - latest activation
@@ -205,11 +221,6 @@ private:
   f16_t* _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
 };
 
-enum class InferenceMode {
-  HYDRATE_KV_CACHE, // only hydrate the KV cache and don't compute output logits
-  OUTPUT_LOGITS // set InferenceState logits to logits for the next token
-};
-
 struct Model {
   std::shared_ptr<Config> config;
 
@@ -230,6 +241,7 @@ struct Model {
 private:
   void _forward_cpu(InferenceState& s, int token, int pos, InferenceMode mode);
   void _forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode);
+  void _forward_cuda_build_graph(InferenceState& s, int token, int pos, InferenceMode mode);
   void _copy_embedding(InferenceState& s, int token);
 
   Device _device = Device::CPU;
