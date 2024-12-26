@@ -1033,6 +1033,8 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
   if (g.is_created) {
     // Graph already exists, try to apply changes
     if (cudaGraphExecUpdate(g.instance, g.graph, nullptr) != cudaSuccess) {
+      // Pop last error
+      cudaGetLastError();
       // Only instantiate a new graph if update fails
       CUDA_CHECK(cudaGraphExecDestroy(g.instance));
       CUDA_CHECK(cudaGraphInstantiate(&g.instance, g.graph, nullptr, nullptr, 0));
