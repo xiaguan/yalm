@@ -67,6 +67,10 @@ struct CudaGraph {
   cudaGraph_t graph;
   cudaGraphExec_t instance;
   bool is_created = false;
+  std::unordered_map<std::string, cudaGraphNode_t> nodes;
+
+  void add_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream);
+  void update_kernel_node(std::string key, cudaKernelNodeParams params);
 };
 
 // Buffer for all state used during a forward pass.
@@ -97,14 +101,17 @@ struct InferenceState {
   void cuda();
   Device device() const { return _device; }
   cudaStream_t stream() const { return _stream; }
-  CudaGraph& graph(InferenceMode mode) {
-    return mode == InferenceMode::HYDRATE_KV_CACHE ? _hydrate_graph : _output_graph;
+  InferenceMode mode() const { return _mode; }
+  void set_mode(InferenceMode mode) { _mode = mode; }
+  CudaGraph& graph() {
+    return _mode == InferenceMode::HYDRATE_KV_CACHE ? _hydrate_graph : _output_graph;
   }
 
 private:
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
   cudaStream_t _stream;
+  InferenceMode _mode = InferenceMode::OUTPUT_LOGITS;
   CudaGraph _hydrate_graph;
   CudaGraph _output_graph;
 
@@ -194,9 +201,7 @@ private:
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
 
-#if DEBUG_MODEL
   int _layer_i = 0;
-#endif
 
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
