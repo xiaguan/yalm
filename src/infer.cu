@@ -833,7 +833,6 @@ void Block::_block_cuda(
   
   // multihead attention: dot products and softmax
   {
-    // TODO: add node
     dim3 tpb;
     tpb.x = warp_size;
     tpb.y = c.n_heads / c.n_kv_heads;
