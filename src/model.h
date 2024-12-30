@@ -69,8 +69,9 @@ struct CudaGraph {
   bool is_created = false;
   std::unordered_map<std::string, cudaGraphNode_t> nodes;
 
-  void add_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream);
-  void update_kernel_node(std::string key, cudaKernelNodeParams params);
+  void wrap(std::function<void()> func, cudaStream_t s);
+  void launch(cudaStream_t s);
+  void add_or_update_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream);
 };
 
 // Buffer for all state used during a forward pass.

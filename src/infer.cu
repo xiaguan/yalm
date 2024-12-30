@@ -804,11 +804,7 @@ void Block::_block_cuda(
     };
     params.kernelParams = kernelParams;
     params.extra = nullptr;
-    if (!s.graph().is_created) {
-      s.graph().add_kernel_node(fmt::format("{}:fused_rope_and_cache_update", _layer_i), params, s.stream());
-    } else {
-      s.graph().update_kernel_node(fmt::format("{}:fused_rope_and_cache_update", _layer_i), params);
-    }
+    s.graph().add_or_update_kernel_node(fmt::format("{}:fused_rope_and_cache_update", _layer_i), params, s.stream());
   }
   if (kv_sink > 0) {
     // Sink tokens remain untouched while the rest of the KV cache is incrementally 
@@ -832,11 +828,7 @@ void Block::_block_cuda(
     };
     params.kernelParams = kernelParams;
     params.extra = nullptr;
-    if (!s.graph().is_created) {
-      s.graph().add_kernel_node(fmt::format("{}:rotate_sink_tokens", _layer_i), params, s.stream());
-    } else {
-      s.graph().update_kernel_node(fmt::format("{}:rotate_sink_tokens", _layer_i), params);
-    }
+    s.graph().add_or_update_kernel_node(fmt::format("{}:rotate_sink_tokens", _layer_i), params, s.stream());
   }
   
   // multihead attention: dot products and softmax
@@ -869,11 +861,7 @@ void Block::_block_cuda(
       };
       params.kernelParams = kernelParams;
       params.extra = nullptr;
-      if (!s.graph().is_created) {
-        s.graph().add_kernel_node(fmt::format("{}:attn_dot", _layer_i), params, s.stream());
-      } else {
-        s.graph().update_kernel_node(fmt::format("{}:attn_dot", _layer_i), params);
-      }
+      s.graph().add_or_update_kernel_node(fmt::format("{}:attn_dot", _layer_i), params, s.stream());
     }
 
     {
@@ -892,11 +880,7 @@ void Block::_block_cuda(
       };
       params.kernelParams = kernelParams;
       params.extra = nullptr;
-      if (!s.graph().is_created) {
-        s.graph().add_kernel_node(fmt::format("{}:attn_softmax", _layer_i), params, s.stream());
-      } else {
-        s.graph().update_kernel_node(fmt::format("{}:attn_softmax", _layer_i), params);
-      }
+      s.graph().add_or_update_kernel_node(fmt::format("{}:attn_softmax", _layer_i), params, s.stream());
     }
   }
   // multihead attention: mix values with attention scores
@@ -926,11 +910,7 @@ void Block::_block_cuda(
     };
     params.kernelParams = kernelParams;
     params.extra = nullptr;
-    if (!s.graph().is_created) {
-      s.graph().add_kernel_node(fmt::format("{}:att_mix", _layer_i), params, s.stream());
-    } else {
-      s.graph().update_kernel_node(fmt::format("{}:att_mix", _layer_i), params);
-    }
+    s.graph().add_or_update_kernel_node(fmt::format("{}:att_mix", _layer_i), params, s.stream());
   }
 
   // final matmul projection and residual back:
@@ -1126,18 +1106,11 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
   // InferenceState stream to form a CUDA graph, which we can save and call again,
   // which is more efficient to execute on the device than the equivalent series
   // of kernel dispatches.
-  if (!g.is_created) {
-    CUDA_CHECK(cudaStreamBeginCapture(s.stream(), cudaStreamCaptureModeGlobal));
+  g.wrap([&]() {
     _forward_cuda_build_graph(s, token, pos, mode);
-    CUDA_CHECK(cudaStreamEndCapture(s.stream(), &g.graph));
-    CUDA_CHECK(cudaGraphInstantiate(&g.instance, g.graph, nullptr, nullptr, 0));
-    g.is_created = true;
-  } else {
-    _forward_cuda_build_graph(s, token, pos, mode);
-  }
+  }, s.stream());
 
-  // Launch the graph that we have now saved.
-  CUDA_CHECK(cudaGraphLaunch(g.instance, s.stream()));
+  g.launch(s.stream());
   
   if (mode == InferenceMode::OUTPUT_LOGITS) {
     CUDA_CHECK(cudaStreamSynchronize(s.stream())); // After this, s.logits contains logits of output token
@@ -1177,11 +1150,7 @@ void Model::_forward_cuda_build_graph(InferenceState& s, int token, int pos, Inf
     };
     params.kernelParams = kernelParams;
 
-    if (!s.graph().is_created) {
-      s.graph().add_kernel_node("copy_embedding", params, s.stream());
-    } else {
-      s.graph().update_kernel_node("copy_embedding", params);
-    }
+    s.graph().add_or_update_kernel_node("copy_embedding", params, s.stream());
   }
   
   // When decoding past the context length, keep the first few tokens in the KV cache
@@ -1233,22 +1202,38 @@ void Model::_forward_cuda_build_graph(InferenceState& s, int token, int pos, Inf
 #undef STATIC_KERNEL
 }
 
-void CudaGraph::add_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream) {
-  // Get the currently capturing graph (since `graph` starts out null when recording)
-  cudaStreamCaptureStatus capture_status;
-  cudaGraph_t current_graph;
-  const cudaGraphNode_t *deps;
-  size_t dep_count;
-  CUDA_CHECK(cudaStreamGetCaptureInfo_v2(stream, &capture_status, nullptr, &current_graph, &deps, &dep_count));
-
-  // Now add a new node
-  cudaGraphNode_t new_node;
-  CUDA_CHECK(cudaGraphAddKernelNode(&new_node, current_graph, deps, dep_count, &params));
-  nodes[key] = new_node;
-  // Update the stream dependency
-  CUDA_CHECK(cudaStreamUpdateCaptureDependencies(stream, &new_node, 1, 1));
+void CudaGraph::wrap(std::function<void()> func, cudaStream_t s) {
+  if (!is_created) {
+    CUDA_CHECK(cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal));
+    func();
+    CUDA_CHECK(cudaStreamEndCapture(s, &graph));
+    CUDA_CHECK(cudaGraphInstantiate(&instance, graph, nullptr, nullptr, 0));
+    is_created = true;
+  } else {
+    func();
+  }
 }
 
-void CudaGraph::update_kernel_node(std::string key, cudaKernelNodeParams params) {
-  CUDA_CHECK(cudaGraphExecKernelNodeSetParams(instance, nodes[key], &params));
+void CudaGraph::launch(cudaStream_t s) {
+  CUDA_CHECK(cudaGraphLaunch(instance, s));
+}
+
+void CudaGraph::add_or_update_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream) {
+  if (!is_created) {
+    // Get the currently capturing graph (since `graph` starts out null when recording)
+    cudaStreamCaptureStatus capture_status;
+    cudaGraph_t current_graph;
+    const cudaGraphNode_t *deps;
+    size_t dep_count;
+    CUDA_CHECK(cudaStreamGetCaptureInfo_v2(stream, &capture_status, nullptr, &current_graph, &deps, &dep_count));
+
+    // Now add a new node
+    cudaGraphNode_t new_node;
+    CUDA_CHECK(cudaGraphAddKernelNode(&new_node, current_graph, deps, dep_count, &params));
+    nodes[key] = new_node;
+    // Update the stream dependency
+    CUDA_CHECK(cudaStreamUpdateCaptureDependencies(stream, &new_node, 1, 1));
+  } else {
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(instance, nodes[key], &params));
+  }
 }
