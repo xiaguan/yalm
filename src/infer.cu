@@ -1,6 +1,7 @@
 #include "model.h"
 
 #include <cuda_fp16.h>
+#include "fmt/format.h"
 
 #include <cfloat>
 #include <math.h>
@@ -336,7 +337,7 @@ void fused_qkv_matmul_clip(
 }
 
 __global__
-void attn(
+void attn_dot(
   const half* kb,  // (max_seq_len, n_kv_heads, head_dim) 
   const float* q,   // (n_heads, head_dim)
   int head_dim, 
@@ -633,7 +634,7 @@ void fused_ffn_w1_w3_glu_act(
 }
 
 __global__
-void copy_embedding(
+void copy_embedding_float(
   const float* token_embedding_table, int dim, int token, float* out
 ) {
   // PRECOND: grid and blocks are 1-D
@@ -645,7 +646,7 @@ void copy_embedding(
 }
 
 __global__
-void copy_embedding(
+void copy_embedding_half(
   const half* token_embedding_table, int dim, int token, float* out
 ) {
   // PRECOND: grid and blocks are 1-D
@@ -729,14 +730,15 @@ template <typename T>
 void Block::_block_cuda(
   InferenceState& s, int pos, int kv_sink, int kv_pos, int kv_len
 ) const {
+#define STATIC_KERNEL(x) if (!s.graph().is_created) x;
   const Config& c = *_config;
   
   // attention pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
+      STATIC_KERNEL((rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
         s.x(), rms_att_weight(), c.dim, c.norm_eps, s.xb()
-      );
+      )));
       break;
     }
   }
@@ -748,7 +750,7 @@ void Block::_block_cuda(
     // qkv matmuls for this position
     // some models require clipping qkv values
     int total_rows = q_dim + 2 * kv_dim;  // Total rows across Q, K, V
-    fused_qkv_matmul_clip<<<total_rows, warp_size, 0, s.stream()>>>(
+    STATIC_KERNEL((fused_qkv_matmul_clip<<<total_rows, warp_size, 0, s.stream()>>>(
       wq<T>(),
       wk<T>(),
       wv<T>(),
@@ -760,7 +762,7 @@ void Block::_block_cuda(
       s.q(),
       s.k(),
       s.v()
-    );
+    )));
   }
   
   // Update Q, K with RoPE relative positional encoding: 
@@ -776,22 +778,33 @@ void Block::_block_cuda(
     int max_dim = max(c.n_heads * c.head_dim, c.n_kv_heads * c.head_dim);
     int threads_needed = (max_dim + 1) / 2;  // Each thread handles 2 elements
     int num_blocks = (threads_needed + max_threads_per_block - 1) / max_threads_per_block;
-    
-    fused_rope_and_cache_update<<<num_blocks, max_threads_per_block, 0, s.stream()>>>(
-      s.q(),
-      s.k(),
-      s.v(),
-      c.head_dim,
-      c.n_heads,
-      c.n_kv_heads,
-      pos,
-      kv_pos,
-      c.rope_theta,
-      c.rotary_dim,
-      s.q(),           // Q can be updated in-place
-      kb,
-      vb
-    );
+
+    cudaKernelNodeParams params;
+    params.blockDim = {static_cast<unsigned int>(max_threads_per_block), 1, 1};
+    params.gridDim = {static_cast<unsigned int>(num_blocks), 1, 1};
+    params.sharedMemBytes = 0;
+    params.func = reinterpret_cast<void*>(fused_rope_and_cache_update);
+    float* q = s.q();
+    float* k = s.k();
+    float* v = s.v();
+    void* kernelParams[] = {
+      &q,
+      &k,
+      &v,
+      (void*)&c.head_dim,
+      (void*)&c.n_heads,
+      (void*)&c.n_kv_heads,
+      &pos,
+      &kv_pos,
+      (void*)&c.rope_theta,
+      (void*)&c.rotary_dim,
+      &q,           // Q can be updated in-place
+      &kb,
+      &vb
+    };
+    params.kernelParams = kernelParams;
+    params.extra = nullptr;
+    s.graph().add_or_update_kernel_node(fmt::format("{}:fused_rope_and_cache_update", _layer_i), params, s.stream());
   }
   if (kv_sink > 0) {
     // Sink tokens remain untouched while the rest of the KV cache is incrementally 
@@ -800,9 +813,22 @@ void Block::_block_cuda(
     // forward by 1. See https://arxiv.org/abs/2309.17453 for more.
     int threads_needed = (kv_dim + 1) / 2;  // Each thread handles 2 elements
     int num_blocks = (threads_needed + max_threads_per_block - 1) / max_threads_per_block;
-    rotate_sink_tokens<<<num_blocks, max_threads_per_block, 0, s.stream()>>>(
-      kb, kv_sink, kv_dim, c.head_dim, c.rope_theta, c.rotary_dim
-    );
+    cudaKernelNodeParams params;
+    params.blockDim = {static_cast<unsigned int>(max_threads_per_block), 1, 1};
+    params.gridDim = {static_cast<unsigned int>(num_blocks), 1, 1};
+    params.sharedMemBytes = 0;
+    params.func = reinterpret_cast<void*>(rotate_sink_tokens);
+    void* kernelParams[] = {
+      &kb,
+      &kv_sink,
+      &kv_dim,
+      (void*)&c.head_dim,
+      (void*)&c.rope_theta,
+      (void*)&c.rotary_dim
+    };
+    params.kernelParams = kernelParams;
+    params.extra = nullptr;
+    s.graph().add_or_update_kernel_node(fmt::format("{}:rotate_sink_tokens", _layer_i), params, s.stream());
   }
   
   // multihead attention: dot products and softmax
@@ -813,12 +839,48 @@ void Block::_block_cuda(
     dim3 blocks;
     blocks.x = (kv_len + tpb.x - 1) / tpb.x;
     blocks.y = (c.n_heads + tpb.y - 1) / tpb.y;
-    attn<<<blocks, tpb, 0, s.stream()>>>(
-      kb, s.q(), c.head_dim, kv_len, c.max_seq_len, c.n_heads, c.n_kv_heads, s.att()
-    );
-    attn_softmax<<<c.n_heads, warp_size, 0, s.stream()>>>(
-      s.att(), kv_len, c.max_seq_len, c.n_heads, s.att()
-    );
+
+    {
+      cudaKernelNodeParams params;
+      params.blockDim = tpb;
+      params.gridDim = blocks;
+      params.sharedMemBytes = 0;
+      params.func = reinterpret_cast<void*>(attn_dot);
+      float* q = s.q();
+      float* att = s.att();
+      void* kernelParams[] = {
+        &kb,
+        &q,
+        (void*)&c.head_dim,
+        &kv_len,
+        (void*)&c.max_seq_len,
+        (void*)&c.n_heads,
+        (void*)&c.n_kv_heads,
+        &att
+      };
+      params.kernelParams = kernelParams;
+      params.extra = nullptr;
+      s.graph().add_or_update_kernel_node(fmt::format("{}:attn_dot", _layer_i), params, s.stream());
+    }
+
+    {
+      cudaKernelNodeParams params;
+      params.blockDim = {static_cast<unsigned int>(warp_size), 1, 1};
+      params.gridDim = {static_cast<unsigned int>(c.n_heads), 1, 1};
+      params.sharedMemBytes = 0;
+      params.func = reinterpret_cast<void*>(attn_softmax);
+      float* att = s.att();
+      void* kernelParams[] = {
+        &att,
+        &kv_len,
+        (void*)&c.max_seq_len,
+        (void*)&c.n_heads,
+        &att
+      };
+      params.kernelParams = kernelParams;
+      params.extra = nullptr;
+      s.graph().add_or_update_kernel_node(fmt::format("{}:attn_softmax", _layer_i), params, s.stream());
+    }
   }
   // multihead attention: mix values with attention scores
   {
@@ -827,25 +889,41 @@ void Block::_block_cuda(
     tpb.y = min(kv_len, max_threads_per_block / warp_size);
     dim3 blocks;
     blocks.x = c.n_heads;
-    att_mix<<<blocks, tpb, 0, s.stream()>>>(
-      vb, s.att(),
-      c.head_dim, c.n_heads, c.n_kv_heads, 
-      kv_len, c.max_seq_len, s.xb2()
-    );
+
+    cudaKernelNodeParams params;
+    params.blockDim = tpb;
+    params.gridDim = blocks;
+    params.sharedMemBytes = 0;
+    params.func = reinterpret_cast<void*>(att_mix);
+    float* att = s.att();
+    float* xb2 = s.xb2();
+    void* kernelParams[] = {
+      &vb,
+      &att,
+      (void*)&c.head_dim,
+      (void*)&c.n_heads,
+      (void*)&c.n_kv_heads,
+      &kv_len,
+      (void*)&c.max_seq_len,
+      &xb2
+    };
+    params.kernelParams = kernelParams;
+    params.extra = nullptr;
+    s.graph().add_or_update_kernel_node(fmt::format("{}:att_mix", _layer_i), params, s.stream());
   }
 
   // final matmul projection and residual back:
   // x <- wo(...) + x
-  fused_matmul_add_residuals<<<c.dim/32, warp_size*32, 0, s.stream()>>>(
+  STATIC_KERNEL((fused_matmul_add_residuals<<<c.dim/32, warp_size*32, 0, s.stream()>>>(
     wo<T>(), s.xb2(), q_dim, c.dim, s.x()
-  );
+  )));
   
   // ffn pre-norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
+      STATIC_KERNEL((rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
         s.x(), rms_ffn_weight(), c.dim, c.norm_eps, s.xb()
-      );
+      )));
       break;
     }
   }
@@ -854,27 +932,28 @@ void Block::_block_cuda(
   // Note this is a feedforward with a GLU, not a simple MLP.
   switch (c.act) {
     case ActivationType::GELU: {
-      fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
+      STATIC_KERNEL((fused_ffn_w1_w3_glu_act<T, ActivationType::GELU><<<
         c.hidden_dim, warp_size, 0, s.stream()
       >>>(
         w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
-      );
+      )));
       break;
     }
     case ActivationType::SILU: {
-      fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
+      STATIC_KERNEL((fused_ffn_w1_w3_glu_act<T, ActivationType::SILU><<<
         c.hidden_dim, warp_size, 0, s.stream()
       >>>(
         w1<T>(), w3<T>(), s.xb(), c.dim, c.hidden_dim, s.hb()
-      );
+      )));
       break;
     }
   }
   
   // add residual back: x <- w2(...) + x
-  fused_matmul_add_residuals<<<c.dim/32, warp_size*32, 0, s.stream()>>>(
+  STATIC_KERNEL((fused_matmul_add_residuals<<<c.dim/32, warp_size*32, 0, s.stream()>>>(
     w2<T>(), s.hb(), c.hidden_dim, c.dim, s.x()
-  );
+  )));
+#undef STATIC_KERNEL
 }
 
 void mha_cuda(
@@ -901,7 +980,7 @@ void mha_cuda(
     dim3 blocks;
     blocks.x = (kv_len + tpb.x - 1) / tpb.x;
     blocks.y = (n_heads + tpb.y - 1) / tpb.y;
-    attn<<<blocks, tpb, 0, cudaStreamLegacy>>>(
+    attn_dot<<<blocks, tpb, 0, cudaStreamLegacy>>>(
       (half*)kb, q, head_dim, kv_len, max_seq_len, n_heads, n_kv_heads, att
     );
     attn_softmax<<<n_heads, warp_size, 0, cudaStreamLegacy>>>(
@@ -1018,31 +1097,59 @@ template<> void Block::_block_cuda<f16_t>(InferenceState& s, int pos, int kv_sin
 
 void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode) {
   const Config& c = *config;
+  s.set_mode(mode);
+  CudaGraph& g = s.graph();
+
+  // Dispatch all the kernels that comprise the work being done on the GPU 
+  // for the forward pass of the model. These calls will be recorded in the 
+  // InferenceState stream to form a CUDA graph, which we can save and call again,
+  // which is more efficient to execute on the device than the equivalent series
+  // of kernel dispatches.
+  g.wrap([&]() {
+    _forward_cuda_build_graph(s, token, pos, mode);
+  }, s.stream());
+
+  g.launch(s.stream());
   
-  switch (c.weight_dtype) {
-    case DType::F32: {
-      copy_embedding<<<
-        (c.dim + max_threads_per_block - 1)/max_threads_per_block,
-        max_threads_per_block,
-        0, s.stream()
-      >>>(
-        static_cast<float*>(token_embedding_table), c.dim, token, s.x()
-      );
-      break;
+  if (mode == InferenceMode::OUTPUT_LOGITS) {
+    CUDA_CHECK(cudaStreamSynchronize(s.stream())); // After this, s.logits contains logits of output token
+  }
+  CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+}
+
+void Model::_forward_cuda_build_graph(InferenceState& s, int token, int pos, InferenceMode mode) {
+#define STATIC_KERNEL(x) if (!s.graph().is_created) x;
+  const Config& c = *config;
+
+  {
+    cudaKernelNodeParams params;
+    params.blockDim = {static_cast<unsigned int>(max_threads_per_block), 1, 1};
+    params.gridDim = {static_cast<unsigned int>((c.dim + max_threads_per_block - 1)/max_threads_per_block), 1, 1};
+    params.sharedMemBytes = 0;
+    params.extra = nullptr;
+    switch (c.weight_dtype) {
+      case DType::F32: {
+        params.func = reinterpret_cast<void*>(copy_embedding_float);
+        break;
+      }
+      case DType::F16: {
+        params.func = reinterpret_cast<void*>(copy_embedding_half);
+        break;
+      }
+      default: {
+        assert(false && "unsupported weight dtype for CUDA");
+      }
     }
-    case DType::F16: {
-      copy_embedding<<<
-        (c.dim + max_threads_per_block - 1)/max_threads_per_block,
-        max_threads_per_block,
-        0, s.stream()
-      >>>(
-        static_cast<half*>(token_embedding_table), c.dim, token, s.x()
-      );
-      break;
-    }
-    default: {
-      assert(false && "unsupported weight dtype for CUDA");
-    }
+    float* x = s.x();
+    void* kernelParams[] = {
+      &token_embedding_table,
+      (void*)&c.dim,
+      &token,
+      &x
+    };
+    params.kernelParams = kernelParams;
+
+    s.graph().add_or_update_kernel_node("copy_embedding", params, s.stream());
   }
   
   // When decoding past the context length, keep the first few tokens in the KV cache
@@ -1066,9 +1173,9 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
   // final layer norm
   switch (c.norm_type) {
     case LayerNormType::RMSNorm: {
-      rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
+      STATIC_KERNEL((rmsnorm<<<1, max_threads_per_block, 0, s.stream()>>>(
         s.x(), rms_final_weight, c.dim, c.norm_eps, s.x()
-      );
+      )));
       break;
     }
   }
@@ -1076,22 +1183,56 @@ void Model::_forward_cuda(InferenceState& s, int token, int pos, InferenceMode m
   // classifier into logits
   switch (c.weight_dtype) {
     case DType::F32: {
-      matmul_wide<<<c.vocab_size/32, warp_size*32, 0, s.stream()>>>(
+      STATIC_KERNEL((matmul_wide<<<c.vocab_size/32, warp_size*32, 0, s.stream()>>>(
         static_cast<float*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
-      );
+      )));
       break;
     }
     case DType::F16: {
-      matmul_wide<<<c.vocab_size/32, warp_size*32, 0, s.stream()>>>(
+      STATIC_KERNEL((matmul_wide<<<c.vocab_size/32, warp_size*32, 0, s.stream()>>>(
         static_cast<half*>(wcls), s.x(), c.dim, c.vocab_size, s.logits()
-      );
+      )));
       break;
     }
     default: {
       assert(false && "unsupported weight dtype for CUDA");
     }
   }
-  
-  CUDA_CHECK(cudaStreamSynchronize(s.stream())); // After this, s.logits contains logits of output token
-  CUDA_CHECK(cudaGetLastError()); // check for kernel launch errors
+#undef STATIC_KERNEL
+}
+
+void CudaGraph::wrap(std::function<void()> func, cudaStream_t s) {
+  if (!is_created) {
+    CUDA_CHECK(cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal));
+    func();
+    CUDA_CHECK(cudaStreamEndCapture(s, &graph));
+    CUDA_CHECK(cudaGraphInstantiate(&instance, graph, nullptr, nullptr, 0));
+    is_created = true;
+  } else {
+    func();
+  }
+}
+
+void CudaGraph::launch(cudaStream_t s) {
+  CUDA_CHECK(cudaGraphLaunch(instance, s));
+}
+
+void CudaGraph::add_or_update_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream) {
+  if (!is_created) {
+    // Get the currently capturing graph (since `graph` starts out null when recording)
+    cudaStreamCaptureStatus capture_status;
+    cudaGraph_t current_graph;
+    const cudaGraphNode_t *deps;
+    size_t dep_count;
+    CUDA_CHECK(cudaStreamGetCaptureInfo_v2(stream, &capture_status, nullptr, &current_graph, &deps, &dep_count));
+
+    // Now add a new node
+    cudaGraphNode_t new_node;
+    CUDA_CHECK(cudaGraphAddKernelNode(&new_node, current_graph, deps, dep_count, &params));
+    nodes[key] = new_node;
+    // Update the stream dependency
+    CUDA_CHECK(cudaStreamUpdateCaptureDependencies(stream, &new_node, 1, 1));
+  } else {
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(instance, nodes[key], &params));
+  }
 }

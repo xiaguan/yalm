@@ -130,9 +130,7 @@ Block::Block(
   const Tensor* w2,
   const Tensor* w3
 ) {
-#if DEBUG_MODEL
   _layer_i = layer_i;
-#endif
   _config = config;
   switch (config->weight_dtype) {
     case DType::F32:

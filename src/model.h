@@ -25,6 +25,11 @@ enum class Device {
   CUDA,
 };
 
+enum class InferenceMode {
+  HYDRATE_KV_CACHE, // only hydrate the KV cache and don't compute output logits
+  OUTPUT_LOGITS // set InferenceState logits to logits for the next token
+};
+
 extern "C" void* upload_cuda(void* host, size_t size);
 extern "C" void* download_cuda(void* device, size_t size, std::string debug);
 extern "C" void register_cuda_host(void* host, size_t size);
@@ -58,6 +63,17 @@ struct Config {
   size_t active_bytes(size_t pos) const;
 };
 
+struct CudaGraph {
+  cudaGraph_t graph;
+  cudaGraphExec_t instance;
+  bool is_created = false;
+  std::unordered_map<std::string, cudaGraphNode_t> nodes;
+
+  void wrap(std::function<void()> func, cudaStream_t s);
+  void launch(cudaStream_t s);
+  void add_or_update_kernel_node(std::string key, cudaKernelNodeParams params, cudaStream_t stream);
+};
+
 // Buffer for all state used during a forward pass.
 // Members are reused across subsequent blocks and passes.
 // This lets us avoid allocations during inference.
@@ -86,11 +102,19 @@ struct InferenceState {
   void cuda();
   Device device() const { return _device; }
   cudaStream_t stream() const { return _stream; }
+  InferenceMode mode() const { return _mode; }
+  void set_mode(InferenceMode mode) { _mode = mode; }
+  CudaGraph& graph() {
+    return _mode == InferenceMode::HYDRATE_KV_CACHE ? _hydrate_graph : _output_graph;
+  }
 
 private:
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
   cudaStream_t _stream;
+  InferenceMode _mode = InferenceMode::OUTPUT_LOGITS;
+  CudaGraph _hydrate_graph;
+  CudaGraph _output_graph;
 
   // current activations
   float* _x = nullptr;         // (dim,) - latest activation
@@ -178,9 +202,7 @@ private:
     int kv_len          // number of tokens in the kv cache that we will attend over
   ) const;
 
-#if DEBUG_MODEL
   int _layer_i = 0;
-#endif
 
   std::shared_ptr<Config> _config;
   Device _device = Device::CPU;
@@ -205,11 +227,6 @@ private:
   f16_t* _value_cache = nullptr; // (seq_len, n_kv_heads * head_dim)
 };
 
-enum class InferenceMode {
-  HYDRATE_KV_CACHE, // only hydrate the KV cache and don't compute output logits
-  OUTPUT_LOGITS // set InferenceState logits to logits for the next token
-};
-
 struct Model {
   std::shared_ptr<Config> config;
 
@@ -230,6 +247,7 @@ struct Model {
 private:
   void _forward_cpu(InferenceState& s, int token, int pos, InferenceMode mode);
   void _forward_cuda(InferenceState& s, int token, int pos, InferenceMode mode);
+  void _forward_cuda_build_graph(InferenceState& s, int token, int pos, InferenceMode mode);
   void _copy_embedding(InferenceState& s, int token);
 
   Device _device = Device::CPU;
