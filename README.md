@@ -82,6 +82,7 @@ The test binary also includes benchmarks for individual kernels (useful for prof
 # Limitations
 
 - Only completions may be performed (in addition to some testing modes like computing perplexity on a prompt or performing a [passkey test](https://github.com/ggerganov/llama.cpp/pull/3856)). Chat interface has not been implemented.
+- Only a rudimentary sampler (argmax) has been implemented; temperature is not supported.
 - An NVIDIA GPU is required.
 - The GPU backend only works with a single GPU and the entire model must fit into VRAM.
 - As of Dec 14, 2024 only the following models have been tested:
