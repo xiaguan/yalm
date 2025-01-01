@@ -87,10 +87,11 @@ def gpt2_bytes_to_unicode():
   cs = [chr(n) for n in cs]
   return dict(zip(bs, cs))
 
-def load_tokens(tokenizer_path, vocab_size, use_gpt2_byte_preprocessing):
+def load_tokens(tokenizer_path, vocab_size):
   tokens = [""] * vocab_size
   with open(tokenizer_path, "r") as f:
     tokenizer = json.load(f)
+  use_gpt2_byte_preprocessing = not tokenizer["model"].get("byte_fallback", False)
   
   vocab = tokenizer["model"]["vocab"]
   assert len(vocab) <= vocab_size
@@ -221,9 +222,8 @@ if __name__ == "__main__":
   with open(args.config, "r") as f:
     config = json.load(f)
     metadata = Metadata(config, args.dtype)
-    use_gpt2_byte_preprocessing = not config.get("byte_fallback", False)
 
-  tokens = load_tokens(args.tokenizer, metadata.vocab_size, use_gpt2_byte_preprocessing)
+  tokens = load_tokens(args.tokenizer, metadata.vocab_size)
   tensors = load_weights(args.models, args.dtype, metadata, config.get("tie_word_embeddings", None))
 
   # add tokenizer tensors at the end (to maximize the chance of model tensor alignment)
