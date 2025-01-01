@@ -85,8 +85,9 @@ The test binary also includes benchmarks for individual kernels (useful for prof
 - Only a rudimentary sampler (argmax) has been implemented; temperature is not supported.
 - An NVIDIA GPU is required.
 - The GPU backend only works with a single GPU and the entire model must fit into VRAM.
-- As of Dec 14, 2024 only the following models have been tested:
+- As of Dec 31, 2024 only the following models have been tested:
   - Mistral-v0.2 
+  - Mixtral-v0.1
   - Llama-3.2
 
 # Acknowledgements
