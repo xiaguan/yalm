@@ -51,6 +51,7 @@ Perplexity mode options:
     -f <filepath> input file with prompt
 Completion mode options:
   -n <int>    number of steps to run for in completion mode, default 256. 0 = max_seq_len, -1 = infinite
+  -t <float> temperature (default - 1.0)
   Choose one:
     -i <string> input prompt
     -f <filepath> input file with prompt
@@ -82,12 +83,11 @@ The test binary also includes benchmarks for individual kernels (useful for prof
 # Limitations
 
 - Only completions may be performed (in addition to some testing modes like computing perplexity on a prompt or performing a [passkey test](https://github.com/ggerganov/llama.cpp/pull/3856)). Chat interface has not been implemented.
-- Only a rudimentary sampler (argmax) has been implemented; temperature is not supported.
 - An NVIDIA GPU is required.
 - The GPU backend only works with a single GPU and the entire model must fit into VRAM.
 - As of Dec 31, 2024 only the following models have been tested:
   - Mistral-v0.2 
-  - Mixtral-v0.1
+  - Mixtral-v0.1 (CPU only)
   - Llama-3.2
 
 # Acknowledgements
