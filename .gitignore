@@ -9,7 +9,7 @@ build/
 *.ncu-rep
 perf.data*
 *.gputrace/
-.yalm
-.cache
+*.yalm
+.cache/
 
 **/.DS_Store
