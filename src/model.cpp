@@ -62,11 +62,12 @@ void Config::from_yalm(YALMData &yalm, int context) {
 	    yalm.metadata.contains("qkv_clip") ? std::stof(yalm.metadata.at("qkv_clip").get<std::string>()) : FLT_MAX;
 
 	std::string dtype = yalm.metadata.at("dtype").get<std::string>();
-	// TODO: support fp8
 	if (dtype == "fp32") {
 		weight_dtype = DType::F32;
 	} else if (dtype == "fp16") {
 		weight_dtype = DType::F16;
+	} else if (dtype == "fp8") {
+		weight_dtype = DType::F8E5M2; // Using F8E5M2 format as specified in convert.py
 	} else {
 		spdlog::error("FATAL: unsupported dtype: {}", dtype);
 		assert(false);
@@ -137,7 +138,8 @@ Block::Block(int layer_i, const std::shared_ptr<Config> config, const Tensor *rm
 	_config = config;
 	switch (config->weight_dtype) {
 	case DType::F32:
-	case DType::F16: {
+	case DType::F16:
+	case DType::F8E5M2: {
 		break;
 	}
 	default: {
@@ -225,6 +227,10 @@ void Block::block(InferenceState &s, // inference state
 			_block_cuda<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
 			break;
 		}
+		case DType::F8E5M2: {
+			_block_cuda<f16_t>(s, pos, kv_sink, kv_pos, kv_len); // Temporarily use f16_t path for F8E5M2
+			break;
+		}
 		default: {
 			assert(false && "unsupported weight dtype for cuda");
 		}
@@ -240,6 +246,14 @@ void Block::block(InferenceState &s, // inference state
 			_block_cpu<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
 #else
 			assert(false && "float16 not supported on this platform");
+#endif
+			break;
+		}
+		case DType::F8E5M2: {
+#if defined(__AVX2__) && defined(__F16C__)
+			_block_cpu<f16_t>(s, pos, kv_sink, kv_pos, kv_len); // Temporarily use f16_t path for F8E5M2
+#else
+			assert(false && "float8 not supported on this platform");
 #endif
 			break;
 		}

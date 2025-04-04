@@ -457,6 +457,14 @@ void Model::_copy_embedding(InferenceState &s, int token) {
 		}
 		break;
 	}
+	case DType::F8E5M2: {
+		// For now, treat F8E5M2 as F16 since we'll convert during model loading
+		f16_t *emb = static_cast<f16_t *>(token_embedding_table);
+		for (int i = 0; i < c.dim; i += 1) {
+			s.x()[i] = half_to_float(emb[token * c.dim + i]);
+		}
+		break;
+	}
 	default: {
 		assert(false && "unsupported weight dtype");
 	}
@@ -501,6 +509,11 @@ void Model::_forward_cpu(InferenceState &s, int token, int pos, InferenceMode mo
 		break;
 	}
 	case DType::F16: {
+		matmul(s.logits(), s.x(), static_cast<f16_t *>(wcls), c.dim, c.vocab_size);
+		break;
+	}
+	case DType::F8E5M2: {
+		// For now, treat F8E5M2 as F16 since we'll convert during model loading
 		matmul(s.logits(), s.x(), static_cast<f16_t *>(wcls), c.dim, c.vocab_size);
 		break;
 	}
