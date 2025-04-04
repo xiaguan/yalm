@@ -10,9 +10,9 @@
 struct TokenTrie;
 
 struct TokenTrie {
-  std::unordered_map<char, std::shared_ptr<TokenTrie>> children;
-  // If non-negative, then this represents the ID of the token formed by the path from the root to this node.
-  int token_id = -1;
+	std::unordered_map<char, std::shared_ptr<TokenTrie>> children;
+	// If non-negative, then this represents the ID of the token formed by the path from the root to this node.
+	int token_id = -1;
 };
 
 /*
@@ -25,7 +25,7 @@ Shown as a list of strings:
   "</s>",         // 2
   "<0x00>",       // 3--------------+
   "<0x01>",       // 4              |  Byte
-  "<0x02>",       // 5              |  Fallback 
+  "<0x02>",       // 5              |  Fallback
   ...                               |  Tokens
   "<0xFE>",       // 257            |
   "<0xFF>",       // 258------------+
@@ -49,24 +49,25 @@ Important token IDs are included in the metadata of the .yalm file:
 */
 
 struct Tokenizer {
-  // vector where the index is the token id and the value is the token string
-  std::vector<std::string> vocab;
-  // trie mapping token strings to token ids
-  TokenTrie vocab_trie;
+	// vector where the index is the token id and the value is the token string
+	std::vector<std::string> vocab;
+	// trie mapping token strings to token ids
+	TokenTrie vocab_trie;
 
-  int bos_id = -1;
-  int eos_id = -1;
-  int eot_id = -1;
-  // start index of the byte fallback range (256 tokens). -1 if none.
-  int byte_fallback_start = -1;
+	int bos_id = -1;
+	int eos_id = -1;
+	int eot_id = -1;
+	// start index of the byte fallback range (256 tokens). -1 if none.
+	int byte_fallback_start = -1;
 
-  // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
-  // TODO: use constexpr?
-  std::string byte_pieces[256];
+	// convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ...,
+	// '{0xFF}\0'.
+	// TODO: use constexpr?
+	std::string byte_pieces[256];
 
-  Tokenizer(const YALMData& data);
+	Tokenizer(const YALMData &data);
 
-  std::vector<int> encode(const std::string& text, bool encode_bos) const;
-  std::string decode_one(int prev_token, int token) const;
-  std::string encoding_to_debug_string(const std::vector<int>& encoding) const;
+	std::vector<int> encode(const std::string &text, bool encode_bos) const;
+	std::string decode_one(int prev_token, int token) const;
+	std::string encoding_to_debug_string(const std::vector<int> &encoding) const;
 };
