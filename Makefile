@@ -3,6 +3,10 @@ MAKEFLAGS+=-r -j
 UNAME=$(shell uname)
 
 NVCC?=nvcc
+CXX?=g++
+
+# Set the host compiler for NVCC
+CUFLAGS+=-ccbin=$(CXX)
 
 BUILD=build
 ASM_DIR=$(BUILD)/asm
