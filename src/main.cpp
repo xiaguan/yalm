@@ -6,13 +6,13 @@
 #include <sstream>
 #include <stdio.h>
 
-#include "fmt/format.h"
-
 #include "codec.h"
 #include "model.h"
 #include "sampler.h"
 #include "time.h"
 #include "tokenizer.h"
+
+#include "spdlog/spdlog.h"
 
 void error_usage() {
 	fprintf(stderr, "Usage:   main <checkpoint> [options]\n");
@@ -40,18 +40,6 @@ void error_usage() {
 	fprintf(stderr, "  -l <int>    passkey position (-1 - random)\n");
 	exit(1);
 }
-
-#if DEBUG_MODEL
-void debug_tensors(Config &c) {
-	assert(debug_map_cpu().size() == debug_map_cuda().size());
-	for (auto &[name, cpu] : debug_map_cpu()) {
-		DebugTensor &cuda = debug_map_cuda().at(name);
-		float maxerr = cpu.max_err(cuda);
-		std::cout << fmt::format("{} maxerr: {}", name, maxerr) << std::endl;
-	}
-	std::cout << std::endl;
-}
-#endif
 
 void run_completion(const std::string &checkpoint_path, const std::string &device, const std::string &prompt,
                     const int context, int num_steps, float temperature) {
@@ -319,6 +307,7 @@ int main(int argc, char *argv[]) {
 	} else {
 		error_usage();
 	}
+
 	for (int i = 2; i < argc;) {
 		// do some basic validation
 		if (i + 1 >= argc) {
@@ -425,6 +414,8 @@ int main(int argc, char *argv[]) {
 			return 1;
 		}
 	}
+
+	spdlog::info("Using checkpoint: {}", checkpoint_path);
 
 	if (mode == "completion") {
 		run_completion(checkpoint_path, device, prompt, context, num_steps, temperature);

@@ -7,6 +7,7 @@
 #include <cfloat>
 #include <iostream>
 #include <limits.h>
+#include <spdlog/spdlog.h>
 #include <string>
 
 #include "immintrin.h"
@@ -67,7 +68,7 @@ void Config::from_yalm(YALMData &yalm, int context) {
 	} else if (dtype == "fp16") {
 		weight_dtype = DType::F16;
 	} else {
-		std::cerr << "FATAL: unsupported dtype: " << dtype << std::endl;
+		spdlog::error("FATAL: unsupported dtype: {}", dtype);
 		assert(false);
 	}
 }
